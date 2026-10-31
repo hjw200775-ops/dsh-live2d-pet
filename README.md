@@ -27,14 +27,24 @@ DSH（DeepSeek Harness）的 Live2D 桌宠浮层：跟随助手运行状态切�
 dsh plugin --profile desktop add dsh-deepseek-live2d
 
 # 或者从 Release 里的 tgz
-dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.0.tgz'
+dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.2.tgz'
 ```
 
 ### 2. 准备模型与 Core
 
-- 模型：从 [GitHub Releases](../../releases) 下载 `DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，
-  解压到任意私有目录（不要放进本仓库）；
-- Core：从 Live2D 官网下载 `live2dcubismcore.min.js`，同样放在私有目录。
+**方式 A（推荐）：用插件自带的下载脚本**，自动下载并校验 sha256：
+
+```powershell
+npx dsh-live2d-fetch-model --dest "$env:USERPROFILE\.dsh\live2d"
+```
+
+（如果已经在本地装了插件，也可以直接跑 `node <插件目录>\scripts\fetch-model.mjs --dest <目录>`。）
+
+**方式 B：手动下载**——从 [GitHub Releases](../../releases) 下载
+`DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，解压到任意私有目录（不要放进本仓库）。
+
+两种方式都只得到模型；**Live2D Cubism Core 需要另外从 Live2D 官网下载**
+`live2dcubismcore.min.js`，同样放在私有目录。
 
 ### 3. 配置
 
