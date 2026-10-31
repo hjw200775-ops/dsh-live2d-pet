@@ -89,9 +89,11 @@ test('Electron 二进制缺失时自动补跑 install.js 并重新解析', async
 
 test('安装脚本失败时给出可读原因，不抛异常', async () => {
   const root = await fakePluginRoot();
+  const lines = [];
   try {
     const result = await ensureElectron({
       pluginRoot: root,
+      log: line => lines.push(line),
       deps: {
         findElectron: () => null,
         runNodeScript: async () => ({ ok: false, code: 1 }),
@@ -99,6 +101,7 @@ test('安装脚本失败时给出可读原因，不抛异常', async () => {
     });
     assert.equal(result.ready, false);
     assert.match(result.reason, /electron-install-failed/);
+    assert.ok(lines.some(line => line.includes('ELECTRON_MIRROR')), '失败时要提示镜像方案');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

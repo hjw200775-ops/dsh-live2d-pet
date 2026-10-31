@@ -120,6 +120,9 @@ export async function ensureElectron({ pluginRoot, env = process.env, log = () =
     log('[live2d] Electron 运行时已就绪。');
     return { ready: true, electron: after, installed: true };
   }
+  log('[live2d] Electron 下载/安装失败。国内网络可以换镜像后重试：');
+  log('[live2d]   $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"');
+  log('[live2d]   然后在 profile 目录执行：npx dsh-live2d-setup');
   return { ready: false, reason: `electron-install-failed(${result?.code ?? result?.error?.message ?? 'error'})` };
 }
 

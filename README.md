@@ -23,18 +23,25 @@ DSH（DeepSeek Harness）的 Live2D 桌宠：跟随助手运行状态切换动�
 ### 1. 装插件
 
 ```powershell
-# 从 npm
+# 推荐：指定版本，避免刚发布时缓存滞后装到旧版
+dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.8
+
+# 或不指定版本（发布早期可能解析到旧版本，见下方注意）
 dsh plugin --profile desktop add dsh-deepseek-live2d
 
 # 或从 Release 里的 tgz
-dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.6.tgz'
+dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.8.tgz'
 
 # 或直接从 GitHub 源码装
 dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 ```
 
-> `dsh plugin add` 有时会以退出码 1 结束，并打印 `Ignored build scripts: electron`。
-> **这不影响使用**：包已经装好了，插件首次启动会自己补装 Electron；想当场装好见下面第 3 步。
+**两个常见误会，先说清楚：**
+
+- **装完看到 `Ignored build scripts: electron`、退出码是 1** —— 这是 pnpm 默认拦截依赖的构建脚本，**包其实已经装好了**。
+  插件首次启动会自己补装 Electron；想当场补好见第 3 步。GUI 里如果显示成“失败”，忽略即可。
+- **刚发布后按包名装，拿到的可能还是上一版** —— pnpm 的元数据缓存会滞后几分钟到几小时。
+  想立刻拿到新版就**指定版本号**（`@0.6.8`）或直接用 Release 里的 tgz。
 
 ### 2. 放 Core（唯一需要手动的一步）
 
@@ -70,6 +77,22 @@ npx dsh-live2d-setup
 ```powershell
 npx dsh-live2d-setup --plugin "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d"
 ```
+
+### 3.1 Electron 下载慢或失败（国内网络）
+
+Electron 的二进制是安装脚本从 GitHub 拉的，国内网络可能很慢甚至超时。换镜像即可
+（`@electron/get` 认这个环境变量，不用改代码）；设好后再触发一次补装：
+
+```powershell
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
+npx dsh-live2d-setup
+```
+
+模型包（48 MB）走的是 `api.github.com`，脚本自带直链回退；如果两条都不通，可以手动从
+[Releases](https://github.com/hjw200775-ops/dsh-live2d-pet-/releases) 下载模型 zip，解压到
+`~/.dsh/live2d`（应得到 `~/.dsh/live2d/DeepSeek-chan/大肥鱼.model3.json`）。
 
 ### 4. 可选配置
 
