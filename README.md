@@ -1,4 +1,4 @@
-﻿# DSH DeepSeek-chan Live2D
+# DSH DeepSeek-chan Live2D
 
 DSH（DeepSeek Harness）的 Live2D 桌宠浮层：跟随助手运行状态切换动作与表情，透明背景、可拖动缩放、可保存位置。代码 MIT 开源。
 
@@ -62,8 +62,8 @@ dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.0.tgz'
 - 模型署名（请在任何公开场合保留）：
   - Illustration & PSD Layer Separation / Model Release：**Kamiya Ryoko（神宫凉子）**
   - Live2D Rigging：**霓虹猫_NeonNeko**
-- 本仓库的 GitHub Release 附件包含该模型，**已获得著作权人许可**，仅限本仓库发布使用；
-  不构成对模型的再授权。
+- 本仓库的 GitHub Release 附件包含该模型，**已获得著作权人许可**（2026-10-31，记录见
+  [docs/permission.md](docs/permission.md)），仅限本仓库发布使用；不构成对模型的再授权。
 - 使用者**不得转售**模型、不得把模型再次上传到其他平台供他人下载；商业用途请按原作者条款联系作者。
 - 模型原始 `Terms of Use` 随压缩包提供，以其为准。
 - **Live2D Cubism Core 不随本仓库分发**，其使用遵循 Live2D 的许可协议。
