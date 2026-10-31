@@ -1,10 +1,12 @@
 import { readFile, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startViewer } from './viewer-server.js';
 import {createActivity} from './activity.js';
 import {createBalance} from './balance.mjs';
 import {startBridgePublisher} from './bridge.mjs';
+import { startDesktopPet } from './launch-desktop.mjs';
 
 export const name = 'deepseek-live2d';
 export const inject = ['webServer', 'credentials'];
@@ -70,6 +72,11 @@ export async function apply(ctx, config = {}) {
   const showOverlay=local.overlay!==false && config.overlay!==false;
   let viewer;
   if(showOverlay) viewer=await startViewer({ ...local, preferencesFile:local.preferencesFile || path.join(configDir,'preferences.json'), activity });
+  else {
+    const pluginRoot=path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
+    const launched=startDesktopPet({ pluginRoot, configFile });
+    if(!launched.started) console.error(`Live2D 桌宠窗口没有启动：${launched.reason}`);
+  }
   const unsubs=['agent/status','agent/assistant-stream','agent/error'].map(event=>ctx.on(event,p=>activity.receive(event,p)));
   let unregister;
   try {
