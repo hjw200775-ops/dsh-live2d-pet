@@ -16,8 +16,11 @@
 import { createHash } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+export const DEFAULT_DEST = path.join(homedir(), '.dsh', 'live2d');
 
 export const OWNER = 'hjw200775-ops';
 export const REPO = 'dsh-live2d-pet-';
@@ -41,7 +44,7 @@ export function sha256Hex(buffer) {
 }
 
 export function parseArgs(argv) {
-  const out = { dest: './model', tag: TAG, force: false, sha256: MODEL_SHA256, via: 'auto', url: '' };
+  const out = { dest: DEFAULT_DEST, tag: TAG, force: false, sha256: MODEL_SHA256, via: 'auto', url: '' };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--dest') out.dest = argv[++i];

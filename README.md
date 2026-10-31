@@ -30,42 +30,50 @@ dsh plugin --profile desktop add dsh-deepseek-live2d
 dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.2.tgz'
 ```
 
-### 2. 准备模型与 Core
+### 2. 准备模型与 Core（一次就够）
 
-**方式 A（推荐）：用插件自带的下载脚本**，自动下载并校验 sha256：
+**方式 A（推荐）：一条命令下载模型**，自动校验 sha256 并解压到 `~/.dsh/live2d`：
 
 ```powershell
-npx dsh-live2d-fetch-model --dest "$env:USERPROFILE\.dsh\live2d"
+npx dsh-live2d-fetch-model
 ```
 
-（如果已经在本地装了插件，也可以直接跑 `node <插件目录>\scripts\fetch-model.mjs --dest <目录>`。）
-
 **方式 B：手动下载**——从 [GitHub Releases](../../releases) 下载
-`DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，解压到任意私有目录（不要放进本仓库）。
+`DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，解压到 `~/.dsh/live2d`
+（解压后应得到 `~/.dsh/live2d/DeepSeek-chan/大肥鱼.model3.json`）。
 
-两种方式都只得到模型；**Live2D Cubism Core 需要另外从 Live2D 官网下载**
-`live2dcubismcore.min.js`，同样放在私有目录。
+然后从 Live2D 官网下载 `live2dcubismcore.min.js`，放到：
 
-### 3. 配置
+```
+~/.dsh/live2d/live2dcubismcore.min.js
+```
 
-`config.json`（路径自定，不要提交进仓库）：
+### 3. 启动
+
+**重新启动 DSH 即可，不用写任何配置文件。** 插件会自动按约定路径找模型与 Core，
+桌宠会以浮层形式出现在右下角。
+
+### 4. 可选配置（只有需要改路径/关闭浮层时才用）
+
+在 `~/.dsh/live2d/config.json` 写：
 
 ```json
 {
-  "modelFile": "<模型目录>\\DeepSeek-chan\\大肥鱼.model3.json",
-  "coreFile": "<core 目录>\\live2dcubismcore.min.js"
+  "modelFile": "D:\\models\\DeepSeek-chan\\大肥鱼.model3.json",
+  "coreFile": "D:\\live2d\\live2dcubismcore.min.js",
+  "overlay": true
 }
 ```
 
-在 desktop profile 的 `cordis.patch.yml` 里追加：
+或者在 desktop profile 的 `cordis.patch.yml` 里覆盖：
 
 ```yaml
 - id: deepseek-live2d
   config:
-    configFile: '<绝对路径>\\config.json'
+    overlay: true
 ```
 
-**改完从「应用 → 退出」完全退出 DSH 再启动**，只刷新页面可能出现资源 404。
+`overlay: false` 会**关闭**页面内的桌宠浮层（用于只跑独立桌面窗口的场景）。
 
 ## 模型与许可
 

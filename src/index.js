@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { startViewer } from './viewer-server.js';
+import { readFile, access } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
+import { startViewer } from './viewer-server.js';
 import {createActivity} from './activity.js';
 import {createBalance} from './balance.mjs';
 import {startBridgePublisher} from './bridge.mjs';
@@ -8,12 +9,54 @@ import {startBridgePublisher} from './bridge.mjs';
 export const name = 'deepseek-live2d';
 export const inject = ['webServer', 'credentials'];
 
+async function exists(file) {
+  try { await access(file); return true; } catch { return false; }
+}
+
+/**
+ * 解析模型与 Core 的位置。
+ *
+ * 优先级：显式 config > DSH_LIVE2D_CONFIG 指向的配置文件 > 约定目录
+ *   ~/.dsh/live2d/config.json
+ *   ~/.dsh/live2d/deepseek-chan/大肥鱼.model3.json
+ *   ~/.dsh/live2d/live2dcubismcore.min.js
+ *
+ * 这样用户按「装插件 → npx dsh-live2d-fetch-model → 放 Core」三步做完，
+ * 再打开 DSH 就能直接看到桌宠，不必手写配置文件。
+ */
+export async function resolveModelConfig(config = {}, { env = process.env, home = homedir() } = {}) {
+  const dir = path.join(home, '.dsh', 'live2d');
+  const configFile = config.configFile || env.DSH_LIVE2D_CONFIG || path.join(dir, 'config.json');
+
+  let local = {};
+  try {
+    local = JSON.parse(await readFile(configFile, 'utf8'));
+  } catch (error) {
+    // 配置文件不存在是正常的零配置路径；其它错误（坏 JSON、权限）要让人看见。
+    if (error.code !== 'ENOENT') throw new Error(`无法读取 Live2D 配置 ${configFile}：${error.message}`);
+  }
+
+  const merged = { ...local, ...config };
+
+  if (!merged.modelFile) {
+    const candidates = [
+      path.join(dir, 'deepseek-chan', '大肥鱼.model3.json'),
+      path.join(dir, 'model', 'DeepSeek-chan', '大肥鱼.model3.json'),
+    ];
+    merged.modelFile = (await Promise.all(candidates.map(async p => ((await exists(p)) ? p : null)))).find(Boolean);
+  }
+  if (!merged.coreFile) {
+    const core = path.join(dir, 'live2dcubismcore.min.js');
+    if (await exists(core)) merged.coreFile = core;
+  }
+  return { configDir: dir, configFile, local: merged };
+}
+
 export async function apply(ctx, config = {}) {
   if (ctx.webServer.host && ctx.webServer.host !== '127.0.0.1') throw new Error('Live2D 私有模型仅支持监听 127.0.0.1 的 DSH 宿主');
-  const configFile = config.configFile || process.env.DSH_LIVE2D_CONFIG;
-  const local = configFile ? JSON.parse(await readFile(configFile, 'utf8')) : {};
+  const { configDir, configFile, local } = await resolveModelConfig(config);
   const activity=createActivity();
-  const bridgeFile=local.bridgeFile || (configFile ? path.join(path.dirname(configFile),'desktop-bridge.json') : undefined);
+  const bridgeFile=local.bridgeFile || path.join(configDir,'desktop-bridge.json');
   const balance=createBalance({
     lowBalance:Number(config.lowBalance??local.lowBalance??1)||1,
     resolveKey:async()=>{
@@ -24,9 +67,9 @@ export async function apply(ctx, config = {}) {
   const balanceTimer=setInterval(()=>{void balance.refresh(false);},60000);
   void balance.refresh(false);
   const stopBridge=bridgeFile?startBridgePublisher({activity,bridgeFile,balance}):()=>{};
-  const showOverlay=config.overlay!==false && local.overlay!==false;
+  const showOverlay=local.overlay!==false && config.overlay!==false;
   let viewer;
-  if(showOverlay) viewer=await startViewer({ ...local, ...config, preferencesFile:local.preferencesFile || (configFile ? path.join(path.dirname(configFile),'preferences.json') : undefined), activity });
+  if(showOverlay) viewer=await startViewer({ ...local, preferencesFile:local.preferencesFile || path.join(configDir,'preferences.json'), activity });
   const unsubs=['agent/status','agent/assistant-stream','agent/error'].map(event=>ctx.on(event,p=>activity.receive(event,p)));
   let unregister;
   try {

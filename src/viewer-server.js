@@ -21,7 +21,7 @@ export async function startViewer(config) {
   const streams=new Set();let telemetry=null;
   let state, failure;
   try {
-    if (!config.modelFile || !config.coreFile) throw new Error('请配置 modelFile 和 coreFile 的本地绝对路径');
+    if (!config.modelFile || !config.coreFile) throw new Error('未找到 modelFile / coreFile：请先运行 npx dsh-live2d-fetch-model（默认解压到 ~/.dsh/live2d），并把 live2dcubismcore.min.js 放到同一目录，然后重启 DSH');
     if (!path.isAbsolute(config.modelFile) || !path.isAbsolute(config.coreFile)) throw new Error('modelFile 和 coreFile 必须使用绝对路径');
     state = await inspectModel(config.modelFile);
     config.coreFile = await realpath(config.coreFile);
