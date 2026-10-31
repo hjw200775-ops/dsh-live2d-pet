@@ -45,7 +45,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hjw200775-ops/dsh-live2d-pet插件.git"
+    "url": "git+https://github.com/hjw200775-ops/dsh-live2d-pet-.git"
   },
   "devDependencies": {
     "electron": "^33.4.11"
