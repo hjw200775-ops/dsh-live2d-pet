@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-live2d",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "DeepSeek-chan Live2D pet overlay for DSH. The model is available as a GitHub Release asset; Live2D Cubism Core is not included.",
   "type": "module",
   "main": "src/index.js",
