@@ -1,10 +1,10 @@
 # DSH DeepSeek-chan Live2D
 
-DSH（DeepSeek Harness）的 Live2D 桌宠浮层：跟随助手运行状态切换动作与表情，透明背景、可拖动缩放、可保存位置。代码 MIT 开源。
+DSH（DeepSeek Harness）的 Live2D 桌宠：跟随助手运行状态切换动作与表情。**默认是独立透明桌面窗口**——装完插件重开 DSH，桌宠会自己出现在桌面上，页面里不会再叠浮层。代码 MIT 开源。
 
-> **模型与 Core 都不在本 npm 包里**：
-> 模型 **DeepSeek-chan** 由 [Kamiya Ryoko](https://vgen.co/KAMIYA)（神宫凉子）绘制并免费发布、霓虹猫_NeonNeko 绑定，本仓库已在作者许可下把模型放进 GitHub Release 附件；
-> Live2D **Cubism Core** 属 Live2D 专有许可，请自行从 Live2D 官网获取。
+> **装完基本不用再折腾**：模型包（约 48 MB）和 Electron 运行时（约 100 MB）都在首次启动时自动下载并校验，只需一次。
+> 唯一要手动的是 **Live2D Cubism Core**：它属 Live2D 专有许可，不能随包分发，请从 [Live2D 官网](https://www.live2d.com/en/sdk/download/web/) 下载 `live2dcubismcore.min.js` 放到 `~/.dsh/live2d/`。
+> 模型 **DeepSeek-chan** 由 [Kamiya Ryoko](https://vgen.co/KAMIYA)（神宫凉子）绘制并免费发布、霓虹猫_NeonNeko 绑定，本仓库已在作者许可下把模型放进 GitHub Release 附件。
 
 ## 状态表现
 
@@ -20,72 +20,82 @@ DSH（DeepSeek Harness）的 Live2D 桌宠浮层：跟随助手运行状态切�
 
 ## 安装
 
-### 1. 安装插件
+### 1. 装插件
 
 ```powershell
 # 从 npm
 dsh plugin --profile desktop add dsh-deepseek-live2d
 
-# 或者从 Release 里的 tgz
-dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.2.tgz'
+# 或从 Release 里的 tgz
+dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.6.tgz'
+
+# 或直接从 GitHub 源码装
+dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 ```
 
-### 2. 准备模型与 Core（一次就够）
+> `dsh plugin add` 有时会以退出码 1 结束，并打印 `Ignored build scripts: electron`。
+> **这不影响使用**：包已经装好了，插件首次启动会自己补装 Electron；想当场装好见下面第 3 步。
 
-**方式 A（推荐）：一条命令下载模型**，自动校验 sha256 并解压到 `~/.dsh/live2d`：
+### 2. 放 Core（唯一需要手动的一步）
 
-```powershell
-npx dsh-live2d-fetch-model
-```
-
-**方式 B：手动下载**——从 [GitHub Releases](../../releases) 下载
-`DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，解压到 `~/.dsh/live2d`
-（解压后应得到 `~/.dsh/live2d/DeepSeek-chan/大肥鱼.model3.json`）。
-
-然后从 Live2D 官网下载 `live2dcubismcore.min.js`，放到：
+从 [Live2D 官网](https://www.live2d.com/en/sdk/download/web/) 下载 Cubism Core，把 `live2dcubismcore.min.js` 放到：
 
 ```
 ~/.dsh/live2d/live2dcubismcore.min.js
 ```
 
-### 3. 启动
+这一步没法自动化：Core 有独立授权，既不能随包分发，也不适合让插件替用户接受协议。
 
-**重新启动 DSH 即可，不用写任何配置文件。** 插件会自动按约定路径找模型与 Core，
-桌宠会以浮层形式出现在右下角。
+### 3. 重新打开 DSH
 
-### 4. 可选配置（只有需要改路径/关闭浮层时才用）
+**应用 → 退出**（别只关窗口、别只刷新），再启动。首次启动时插件会依次：
 
-在 `~/.dsh/live2d/config.json` 写：
+1. 自动下载模型包（约 48 MB，校验 sha256 后解压到 `~/.dsh/live2d`）；
+2. 自动补装 Electron 运行时（约 100 MB）；
+3. 拉起独立透明桌面窗口。
+
+两个下载都只做一次，之后每次启动都是秒开；进度会打在 DSH 控制台里（`[live2d] …`）。
+
+想提前准备好、或者下载失败要重试，跑一条命令即可（不用重启 DSH）：
+
+```powershell
+npx dsh-live2d-setup
+```
+
+### 4. 可选配置
+
+默认配置已经写在包里（`cordis.patch.yml`）：独立桌面窗口 + 首次自动下载。要覆盖就在 desktop profile 的 `cordis.patch.yml` 里改：
+
+```yaml
+- id: deepseek-live2d
+  config:
+    overlay: true         # 改成页面内浮层（带「移动 / 收起」按钮）
+    autoFetchModel: false # 关掉首次自动下载，改由 dsh-live2d-setup 手动触发
+```
+
+也可以写 `~/.dsh/live2d/config.json` 指向自己的模型与 Core：
 
 ```json
 {
   "modelFile": "D:\\models\\DeepSeek-chan\\大肥鱼.model3.json",
   "coreFile": "D:\\live2d\\live2dcubismcore.min.js",
-  "overlay": true
+  "overlay": false
 }
 ```
 
-或者在 desktop profile 的 `cordis.patch.yml` 里覆盖：
+### 5. 独立桌面窗口（默认模式）
 
-```yaml
-- id: deepseek-live2d
-  config:
-    overlay: true
-```
+这就是默认模式：DSH 启动时由插件自动拉起，透明、无边框、置顶、不占任务栏。
+拖动可以搬位置，右键出侧边设置（装扮、置顶、随 DSH 退出），托盘图标也能管理。
 
-`overlay: false` 会**关闭**页面内的桌宠浮层（用于只跑独立桌面窗口的场景）。
-
-### 5. 独立桌面窗口（可选，覆盖整个桌面）
-
-页面内浮层只在 DSH 窗口范围里；想要「透明置顶、盖住整个桌面」的桌宠，用独立窗口模式：
+只想手动开一次（不跟着 DSH 自动启动）：
 
 ```powershell
-npm i -g electron@33          # 只需装一次
 npx dsh-live2d-desktop
 ```
 
-它读取同一份 `~/.dsh/live2d/config.json`。**这个窗口不会随 DSH 自动启动**，
-需要的话把它加进开机启动项，或启动后用托盘图标管理。
+它读取同一份 `~/.dsh/live2d/config.json`。窗口有单实例锁，重复执行只会把已有那只叫到前面，
+不会同时出现两只。
 
 
 ## 模型与许可

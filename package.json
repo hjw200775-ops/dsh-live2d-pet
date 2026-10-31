@@ -1,7 +1,7 @@
 {
   "name": "dsh-deepseek-live2d",
-  "version": "0.6.5",
-  "description": "DeepSeek-chan Live2D pet overlay for DSH. The model is available as a GitHub Release asset; Live2D Cubism Core is not included.",
+  "version": "0.6.6",
+  "description": "DSH 桌宠：装完重开 DSH 就自动出现独立透明桌面窗口。模型首次启动自动下载；Live2D Cubism Core 因授权限制需自行获取。",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -10,6 +10,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
+    "dsh-live2d-setup": "scripts/setup.mjs",
     "dsh-live2d-fetch-model": "scripts/fetch-model.mjs",
     "dsh-live2d-desktop": "scripts/desktop.mjs"
   },
@@ -47,7 +48,9 @@
   "scripts": {
     "preview": "node scripts/preview.mjs",
     "desktop": "electron desktop/main.mjs",
+    "setup": "node scripts/setup.mjs",
     "fetch-model": "node scripts/fetch-model.mjs",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "keywords": [

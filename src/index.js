@@ -6,7 +6,7 @@ import { startViewer } from './viewer-server.js';
 import {createActivity} from './activity.js';
 import {createBalance} from './balance.mjs';
 import {startBridgePublisher} from './bridge.mjs';
-import { startDesktopPet } from './launch-desktop.mjs';
+import { launchDesktopPet, prepareAssets } from './provision.mjs';
 
 export const name = 'deepseek-live2d';
 export const inject = ['webServer', 'credentials'];
@@ -43,6 +43,8 @@ export async function resolveModelConfig(config = {}, { env = process.env, home 
   if (!merged.modelFile) {
     const candidates = [
       path.join(dir, 'deepseek-chan', '大肥鱼.model3.json'),
+      // 下载脚本解压出来的是大写的 DeepSeek-chan，区分大小写的文件系统上必须单独列出。
+      path.join(dir, 'DeepSeek-chan', '大肥鱼.model3.json'),
       path.join(dir, 'model', 'DeepSeek-chan', '大肥鱼.model3.json'),
     ];
     merged.modelFile = (await Promise.all(candidates.map(async p => ((await exists(p)) ? p : null)))).find(Boolean);
@@ -56,7 +58,15 @@ export async function resolveModelConfig(config = {}, { env = process.env, home 
 
 export async function apply(ctx, config = {}) {
   if (ctx.webServer.host && ctx.webServer.host !== '127.0.0.1') throw new Error('Live2D 私有模型仅支持监听 127.0.0.1 的 DSH 宿主');
-  const { configDir, configFile, local } = await resolveModelConfig(config);
+  const pluginRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
+  const log = message => console.error(message);
+  let { configDir, configFile, local } = await resolveModelConfig(config);
+
+  // 首次安装的机器上没有模型：这里自动补齐（Core 受授权限制，只能提示用户自己放）。
+  // 已经装好的机器上这一步只是两次文件检查，不影响启动速度。
+  const assets = await prepareAssets({ pluginRoot, configDir, local, config, log });
+  if (assets.fetched) ({ configDir, configFile, local } = await resolveModelConfig(config));
+
   const activity=createActivity();
   const bridgeFile=local.bridgeFile || path.join(configDir,'desktop-bridge.json');
   const balance=createBalance({
@@ -73,9 +83,8 @@ export async function apply(ctx, config = {}) {
   let viewer;
   if(showOverlay) viewer=await startViewer({ ...local, preferencesFile:local.preferencesFile || path.join(configDir,'preferences.json'), activity });
   else {
-    const pluginRoot=path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
-    const launched=startDesktopPet({ pluginRoot, configFile });
-    if(!launched.started) console.error(`Live2D 桌宠窗口没有启动：${launched.reason}`);
+    // 桌面窗口模式：Electron 没装好时自动补装，装完再拉窗口。整个过程不阻塞 DSH 启动。
+    void launchDesktopPet({ pluginRoot, configFile, log }).catch(error => log(`[live2d] 桌宠启动失败：${error?.message || error}`));
   }
   const unsubs=['agent/status','agent/assistant-stream','agent/error'].map(event=>ctx.on(event,p=>activity.receive(event,p)));
   let unregister;

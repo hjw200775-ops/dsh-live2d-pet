@@ -1,4 +1,10 @@
 - insert:
     - id: deepseek-live2d
       name: dsh-deepseek-live2d
-      # Set DSH_LIVE2D_CONFIG to the absolute path of your local.config.json.
+      config:
+        # 默认用「独立透明桌面窗口」：装完插件重开 DSH 就会自己出现，页面里不会叠浮层。
+        # 想改成页面内浮层（带「移动 / 收起」按钮）就把这行改成 true。
+        overlay: false
+        # 首次启动自动下载模型（约 48 MB）与 Electron 运行时（约 100 MB），只需一次。
+        # 想自己控制就设成 false，然后手动执行 npx dsh-live2d-setup。
+        autoFetchModel: true
