@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readdir, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { findElectron, startDesktopPet } from './launch-desktop.mjs';
 
@@ -13,6 +14,29 @@ export const CORE_DOWNLOAD_PAGE = 'https://www.live2d.com/en/sdk/download/web/';
 
 export async function exists(file) {
   try { await access(file); return true; } catch { return false; }
+}
+
+/**
+ * 找到「真正装进 profile 的那份插件」。
+ *
+ * 为什么需要：`npx dsh-live2d-setup` 在没有本地安装的目录里执行时，npx 会把包临时下载到
+ * 自己的缓存目录再跑，那份副本的 node_modules 不是 DSH 实际加载的那份 —— 往它里面补
+ * Electron 等于白补。所以在临时副本里运行时，回头去 ~/.dsh/profiles/* 下找已安装的那份。
+ */
+export async function findInstalledPluginRoot({ home = homedir(), profilesRoot } = {}) {
+  const root = profilesRoot || path.join(home, '.dsh', 'profiles');
+  let entries;
+  try { entries = await readdir(root, { withFileTypes: true }); } catch { return null; }
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(root, entry.name, 'node_modules', 'dsh-deepseek-live2d');
+    if (!(await exists(path.join(dir, 'package.json')))) continue;
+    const info = await stat(dir).catch(() => null);
+    candidates.push({ dir, mtime: info?.mtimeMs ?? 0 });
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates[0]?.dir ?? null;
 }
 
 /**

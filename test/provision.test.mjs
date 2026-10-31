@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   checkCore,
   ensureElectron,
   ensureModel,
+  findInstalledPluginRoot,
   nodeHostEnv,
   prepareAssets,
   provisionDesktopPet,
@@ -256,5 +257,34 @@ test('Electron 拉不起来时不假装已启动', async () => {
     assert.equal(result.reason, 'electron-package-missing');
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('临时副本（npx 缓存）运行时能找回真正装进 profile 的那份插件', async () => {
+  const home = await tempRoot();
+  const profiles = path.join(home, '.dsh', 'profiles');
+  const older = path.join(profiles, 'web', 'node_modules', 'dsh-deepseek-live2d');
+  const newer = path.join(profiles, 'desktop', 'node_modules', 'dsh-deepseek-live2d');
+  await mkdir(older, { recursive: true });
+  await mkdir(newer, { recursive: true });
+  await writeFile(path.join(older, 'package.json'), '{}');
+  await writeFile(path.join(newer, 'package.json'), '{}');
+  const future = new Date(Date.now() + 60_000);
+  await utimes(newer, future, future);
+  try {
+    const found = await findInstalledPluginRoot({ home });
+    assert.ok(found, '应该找到已安装的插件');
+    assert.equal(path.resolve(found), path.resolve(newer), '应该挑最新的那份');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('没有任何 profile 时返回 null，交给调用方用自身目录', async () => {
+  const home = await tempRoot();
+  try {
+    assert.equal(await findInstalledPluginRoot({ home }), null);
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });

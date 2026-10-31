@@ -59,7 +59,16 @@ dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 想提前准备好、或者下载失败要重试，跑一条命令即可（不用重启 DSH）：
 
 ```powershell
+# 在 desktop profile 目录里执行，npx 才会用到已安装的那份插件
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
 npx dsh-live2d-setup
+```
+
+在别的目录里执行也没关系：脚本发现自己跑在 npx 的临时副本里时，会自动回到
+`~/.dsh/profiles/*` 找真正装好的那份再补。也可以直接指定：
+
+```powershell
+npx dsh-live2d-setup --plugin "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d"
 ```
 
 ### 4. 可选配置
