@@ -24,7 +24,7 @@ export const DEFAULT_DEST = path.join(homedir(), '.dsh', 'live2d');
 
 export const OWNER = 'hjw200775-ops';
 export const REPO = 'dsh-live2d-pet-';
-export const TAG = 'v0.6.1';
+export const TAG = 'v0.6.5';
 export const ASSET = 'DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip';
 export const MODEL_SHA256 = 'e661bad675bc1d29213b2906dde8a1e1069ee5b721e9c06a71b6e9317db892bc';
 export const MODEL_ENTRY = path.join('DeepSeek-chan', '大肥鱼.model3.json');
@@ -161,7 +161,7 @@ export async function extractZip(buffer, dest) {
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log('用法: dsh-live2d-fetch-model --dest <目录> [--tag v0.6.1] [--via auto|api|direct] [--force]');
+    console.log('用法: dsh-live2d-fetch-model --dest <目录> [--tag v0.6.5] [--via auto|api|direct] [--force]');
     return 0;
   }
 
