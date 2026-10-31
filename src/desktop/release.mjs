@@ -23,8 +23,15 @@ export const LOCAL_KEEPS = [
   path.join(home, '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
 ];
 
+// 托盘图标是程序自带的 UI 资源，不属于「模型/截图」，放行。
+const ALLOWED = [/desktop\/tray\.png$/i];
+
 export function blockedPackEntries(entries) {
-  return entries.filter(entry => BLOCKED.some(pattern => pattern.test(String(entry).replaceAll('\\', '/'))));
+  return entries.filter(entry => {
+    const normalized = String(entry).replaceAll('\\', '/');
+    if (ALLOWED.some(pattern => pattern.test(normalized))) return false;
+    return BLOCKED.some(pattern => pattern.test(normalized));
+  });
 }
 
 export function rollbackPlan({ tarball, cli = 'dsh' }) {
