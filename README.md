@@ -1,4 +1,4 @@
-# DSH DeepSeek-chan Live2D
+﻿# DSH DeepSeek-chan Live2D
 
 DSH（DeepSeek Harness）的 Live2D 桌宠浮层：跟随助手运行状态切换动作与表情，透明背景、可拖动缩放、可保存位置。代码 MIT 开源。
 
@@ -32,7 +32,7 @@ dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.0.tgz'
 
 ### 2. 准备模型与 Core
 
-- 模型：从 [GitHub Releases](../../releases) 下载 `DeepSeek-chan_model_for_dsh-live2d-pet.zip`，
+- 模型：从 [GitHub Releases](../../releases) 下载 `DeepSeek-chan_model_for_dsh-live2d-pet_v1.zip`，
   解压到任意私有目录（不要放进本仓库）；
 - Core：从 Live2D 官网下载 `live2dcubismcore.min.js`，同样放在私有目录。
 
