@@ -1,0 +1,33 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createActivity} from '../src/activity.js';
+import {createPreferences} from '../src/preferences.js';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+test('actual DSH frame contracts distinguish reasoning/text, concurrent agents and held errors',async t=>{
+ const hub=createActivity({errorHoldMs:60});t.after(()=>hub.dispose());
+ const agent={id:'one'},other={id:'two'};
+ hub.receive('agent/status',{agent,status:'running'});assert.equal(hub.snapshot().mode,'thinking');
+ hub.receive('agent/assistant-stream',{agent,frame:{type:'chunk',chunk:{type:'reasoning-delta',text:'private'}}});
+ assert.equal(hub.snapshot().mode,'thinking');
+ hub.receive('agent/assistant-stream',{agent,frame:{type:'chunk',chunk:{type:'text-delta',text:'private'}}});assert.equal(hub.snapshot().mode,'answering');
+ hub.receive('agent/status',{agent:other,status:'running'});
+ hub.receive('agent/status',{agent,status:'idle'});assert.equal(hub.snapshot().mode,'thinking');
+ hub.receive('agent/error',{agent:other,error:new Error('private')});
+ hub.receive('agent/status',{agent:other,status:'idle'});assert.equal(hub.snapshot().mode,'error');
+ assert.equal(JSON.stringify(hub.history()).includes('private'),false);
+ await new Promise(r=>setTimeout(r,90));assert.equal(hub.snapshot().mode,'idle');
+ hub.receive('agent/assistant-stream',{agent,frame:{type:'start'}});
+ hub.receive('agent/assistant-stream',{agent,frame:{type:'chunk',chunk:{type:'finish',reason:{kind:'error'}}}});
+ assert.equal(hub.snapshot().mode,'error');
+});
+test('preferences survive reconstruction, merge partial updates and ignore corrupt values',async t=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'dsh-live2d-prefs-'));t.after(()=>rm(dir,{recursive:true,force:true}));const file=path.join(dir,'preferences.json');
+ const p=await createPreferences(file);
+ await Promise.all([p.update({overlay:{left:200,top:100}}),p.update({model:{zoom:1.4,x:30,y:-20}})]);
+ const reopened=await createPreferences(file);
+ assert.deepEqual(reopened.get(),{version:1,overlay:{left:200,top:100},model:{zoom:1.4,x:30,y:-20}});
+ await reopened.update({model:{zoom:NaN,x:Infinity,y:0},overlay:{left:-20,top:20}});
+ assert.deepEqual(JSON.parse(await readFile(file,'utf8')),p.get());
+});

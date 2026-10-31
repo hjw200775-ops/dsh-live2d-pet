@@ -1,0 +1,13 @@
+node_modules/
+*.tgz
+*.zip
+*.log
+*.bak
+models/
+vendor/
+local.config.json
+*.moc3
+*.psd
+*.png
+!desktop/tray.png
+qa/

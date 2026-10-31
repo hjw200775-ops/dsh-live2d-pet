@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><link rel="stylesheet" href="style.css"><title>DeepSeek-chan</title></head>
+<body>
+<main id="pet">
+  <canvas id="canvas" aria-label="DeepSeek-chan Live2D 模型"></canvas>
+  <p id="bubble" hidden></p>
+  <p id="balance" hidden>余额…</p>
+  <p id="status" role="status">检查本地模型与运行时…</p>
+</main>
+<aside id="panel" hidden>
+  <header><strong>设置</strong><button data-act="close" type="button">关闭</button></header>
+  <p id="activity" role="status">待机</p>
+  <button data-act="larger" type="button">放大</button>
+  <button data-act="smaller" type="button">缩小</button>
+  <button data-act="reset" type="button">复位大小</button>
+  <button id="pause" type="button">暂停</button>
+  <button data-act="refresh" type="button">刷新余额</button>
+  <button data-act="pin" type="button">取消置顶</button>
+  <button data-act="quit" type="button">退出</button>
+  <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
+  <p class="section">装扮</p>
+  <div id="outfit"></div>
+  <button data-act="restore" type="button">恢复原始装扮</button>
+  <p class="section">表情</p>
+  <div id="faces"></div>
+  <p class="section">动作</p>
+  <div id="motions"></div>
+  <button data-act="auto" type="button">恢复自动</button>
+  <p id="pace">绘制间隔统计中…</p>
+  <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+</aside>
+<script type="module">
+import('./viewer.js').catch(error=>{
+  const status=document.getElementById('status');
+  if(!status)return;
+  status.hidden=false;
+  status.textContent=`加载失败：${error.message||error}`;
+});
+</script>
+</body></html>

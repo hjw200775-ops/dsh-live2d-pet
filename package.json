@@ -1,0 +1,53 @@
+{
+  "name": "dsh-deepseek-live2d",
+  "version": "0.6.0",
+  "description": "DeepSeek-chan Live2D pet plugin for DSH. Program only; the model and Cubism Core stay outside this package.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "renderer/",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "docs/",
+    "scripts/",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.12",
+    "dsh": "^0.2.0-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  },
+  "dependencies": {
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10"
+  },
+  "scripts": {
+    "preview": "node scripts/preview.mjs",
+    "desktop": "electron desktop/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hjw200775-ops/dsh-live2d-pet插件.git"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11"
+  }
+}

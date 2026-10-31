@@ -1,0 +1,4 @@
+- insert:
+    - id: deepseek-live2d
+      name: dsh-deepseek-live2d
+      # Set DSH_LIVE2D_CONFIG to the absolute path of your local.config.json.

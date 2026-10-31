@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Live2D nose diagnose</title>
+<style>body{margin:0;background:#222;color:#eee;font:14px sans-serif} canvas{display:block} #log{white-space:pre-wrap;padding:8px}</style>
+</head>
+<body>
+<canvas id="canvas" width="720" height="900"></canvas>
+<pre id="log">loading</pre>
+<script>
+const logEl = document.getElementById('log');
+const log = (...a) => { logEl.textContent += '\n' + a.join(' '); };
+const script = src => new Promise((resolve, reject) => {
+  const s = document.createElement('script');
+  s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('load ' + src));
+  document.head.append(s);
+});
+function boundsOf(core, index) {
+  const v = core.getDrawableVertices(index);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < v.length; i += 2) {
+    const x = v[i], y = v[i + 1];
+    if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+function findArtifacts(gl) {
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const buf = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  const black = [];
+  const magenta = [];
+  for (let py = 0; py < h; py++) {
+    for (let x = 0; x < w; x++) {
+      const i = (py * w + x) * 4;
+      const r = buf[i], g = buf[i + 1], b = buf[i + 2], a = buf[i + 3];
+      const y = h - 1 - py;
+      if (a < 20) continue;
+      if (r < 18 && g < 18 && b < 18) black.push(x, y);
+      else if (r > 220 && g < 40 && b > 220) magenta.push(x, y);
+    }
+  }
+  function components(flat) {
+    const S = new Set();
+    for (let i = 0; i < flat.length; i += 2) S.add(flat[i] + ',' + flat[i + 1]);
+    const seen = new Set();
+    const comps = [];
+    for (const key of S) {
+      if (seen.has(key)) continue;
+      const q = [key]; seen.add(key); const comp = [];
+      while (q.length) {
+        const cur = q.pop();
+        const [x, y] = cur.split(',').map(Number);
+        comp.push(x, y);
+        for (const n of [(x+1)+','+y, (x-1)+','+y, x+','+(y+1), x+','+(y-1)]) {
+          if (S.has(n) && !seen.has(n)) { seen.add(n); q.push(n); }
+        }
+      }
+      comps.push(comp);
+    }
+    comps.sort((a, b) => b.length - a.length);
+    return comps.map(comp => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i < comp.length; i += 2) {
+        minX = Math.min(minX, comp[i]); minY = Math.min(minY, comp[i+1]);
+        maxX = Math.max(maxX, comp[i]); maxY = Math.max(maxY, comp[i+1]);
+      }
+      const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      return { pixels: comp.length / 2, minX, minY, maxX, maxY, w: bw, h: bh, fill: (comp.length / 2) / (bw * bh) };
+    });
+  }
+  const blackComps = components(black).filter(c => c.pixels >= 30 && c.w >= 6 && c.h >= 6 && c.w < 80 && c.h < 80 && c.fill > 0.45);
+  return { width: w, height: h, blackPixels: black.length / 2, magentaPixels: magenta.length / 2, blackBlobs: blackComps.slice(0, 8) };
+}
+const patchOff = new URLSearchParams(location.search).get('patch') === '0';
+const shotPrefix = patchOff ? 'base-' : 'fixed-';
+function shot(canvas, name) {
+  return { name: shotPrefix + name, png: canvas.toDataURL('image/png') };
+}
+(async () => {
+  const shots = [];
+  const notes = [];
+  try {
+    await script('core.js'); await script('pixi.js'); await script('live2d.js');
+    if (!patchOff) await script('cubism-color.js');
+    const coreApi = window.Live2DCubismCore;
+    const canvas = document.getElementById('canvas');
+    const app = new PIXI.Application({ view: canvas, width: 720, height: 900, backgroundColor: 0xff00ff, backgroundAlpha: 1, antialias: true, autoStart: false, resolution: 1, autoDensity: false });
+    const model = await PIXI.live2d.Live2DModel.from(new URL('model/model.model3.json', location.href).href, { autoUpdate: false, autoInteract: false, motionPreload: 'NONE' });
+    app.stage.addChild(model);
+    model.anchor.set(0.5, 0);
+    const scale = 900 / (model.height * 0.42);
+    model.scale.set(scale);
+    model.position.set(360, 10);
+    const internal = model.internalModel;
+    internal.updateNaturalMovements = () => {};
+    internal.eyeBlink = null;
+    internal.focusController.x = 0;
+    internal.focusController.y = 0;
+    model.update(16);
+    const core = internal.coreModel;
+    const raw = core._model;
+    const drawableKeys = Object.keys(raw.drawables);
+    const count = core.getDrawableCount();
+    const ids = core.getDrawableIds();
+    const partIds = core._partIds || [];
+    const blendHist = { 0: 0, 1: 0, 2: 0 };
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+      const flags = raw.drawables.constantFlags[i];
+      const blend = core.getDrawableBlendMode(i);
+      blendHist[blend] = (blendHist[blend] || 0) + 1;
+      const b = boundsOf(core, i);
+      const masks = raw.drawables.masks[i];
+      const maskCount = raw.drawables.maskCounts[i];
+      const parent = raw.drawables.parentPartIndices ? raw.drawables.parentPartIndices[i] : (raw.drawables.partIndices ? raw.drawables.partIndices[i] : null);
+      rows.push({
+        i,
+        id: ids[i],
+        flags,
+        blend,
+        inverted: !!core.getDrawableInvertedMaskBit(i),
+        opacity: +raw.drawables.opacities[i].toFixed(3),
+        visible: core.getDrawableDynamicFlagIsVisible(i),
+        texture: core.getDrawableTextureIndices(i),
+        maskCount,
+        masks: maskCount ? Array.from(masks).slice(0, maskCount) : [],
+        parent,
+        parentId: parent != null ? partIds[parent] : null,
+        cx: +((b.minX + b.maxX) / 2).toFixed(2),
+        cy: +((b.minY + b.maxY) / 2).toFixed(2),
+        w: +b.w.toFixed(2),
+        h: +b.h.toFixed(2),
+      });
+    }
+    app.renderer.render(app.stage);
+    const clip = internal.renderer._clippingManager;
+    const contexts = clip._clippingContextListForMask || [];
+    const layout = contexts.map((c, index) => ({
+      index,
+      using: !!c._isUsing,
+      count: c._clippingIdCount,
+      clipped: (c._clippedDrawableIndexList || []).length,
+      x: c._layoutBounds && +c._layoutBounds.x.toFixed(4),
+      y: c._layoutBounds && +c._layoutBounds.y.toFixed(4),
+      w: c._layoutBounds && +c._layoutBounds.width.toFixed(4),
+      h: c._layoutBounds && +c._layoutBounds.height.toFixed(4),
+    }));
+    const zeroLayout = layout.filter(item => item.using && !(item.w > 0 && item.h > 0));
+    notes.push(`drawables ${count} maskContexts ${contexts.length} using ${layout.filter(i => i.using).length} zeroLayout ${zeroLayout.length}`);
+    notes.push('drawable keys ' + drawableKeys.join(','));
+    notes.push('coreVersion ' + coreApi.Version.csmGetVersion() + ' latestMoc ' + coreApi.Version.csmGetLatestMocVersion());
+    notes.push('blend fn ' + coreApi.Utils.hasBlendMultiplicativeBit.toString());
+    notes.push('invert fn ' + coreApi.Utils.hasIsInvertedMaskBit.toString());
+    const baseArt = findArtifacts(app.renderer.gl);
+    notes.push('baseline blobs ' + JSON.stringify(baseArt.blackBlobs));
+    shots.push(shot(canvas, '01-baseline-magenta'));
+
+    app.renderer.backgroundColor = 0xffffff;
+    app.renderer.render(app.stage);
+    shots.push(shot(canvas, '02-baseline-white'));
+    const whiteArt = findArtifacts(app.renderer.gl);
+
+    app.renderer.backgroundColor = 0x87ceeb;
+    app.renderer.render(app.stage);
+    shots.push(shot(canvas, '03-baseline-sky'));
+
+    const drawList = clip.getClippingContextListForDraw();
+    const saved = drawList.slice();
+    for (let i = 0; i < drawList.length; i++) drawList[i] = null;
+    app.renderer.backgroundColor = 0xff00ff;
+    app.renderer.render(app.stage);
+    const noclipArt = findArtifacts(app.renderer.gl);
+    notes.push('noclip blobs ' + JSON.stringify(noclipArt.blackBlobs));
+    shots.push(shot(canvas, '04-noclip-magenta'));
+    for (let i = 0; i < drawList.length; i++) drawList[i] = saved[i];
+
+    const opacities = raw.drawables.opacities;
+    const savedOpacity = Float32Array.from(opacities);
+    function colorOf(store, index) {
+      if (!store) return null;
+      if (store instanceof Float32Array) {
+        const offset = index * 4;
+        return Array.from(store.slice(offset, offset + 4)).map(n => +n.toFixed(3));
+      }
+      const item = store[index];
+      if (item == null) return null;
+      return Array.from(item).slice(0, 4).map(n => +Number(n).toFixed(3));
+    }
+    function pointInTri(px, py, ax, ay, bx, by, cx, cy) {
+      const v0x = cx - ax, v0y = cy - ay, v1x = bx - ax, v1y = by - ay, v2x = px - ax, v2y = py - ay;
+      const dot00 = v0x * v0x + v0y * v0y, dot01 = v0x * v1x + v0y * v1y, dot02 = v0x * v2x + v0y * v2y;
+      const dot11 = v1x * v1x + v1y * v1y, dot12 = v1x * v2x + v1y * v2y;
+      const denom = dot00 * dot11 - dot01 * dot01;
+      if (!denom) return false;
+      const inv = 1 / denom;
+      const u = (dot11 * dot02 - dot01 * dot12) * inv;
+      const v = (dot00 * dot12 - dot01 * dot02) * inv;
+      return u >= -0.001 && v >= -0.001 && u + v < 1.001;
+    }
+    const blob = baseArt.blackBlobs[0];
+    const samples = [];
+    const hitIds = new Set();
+    if (blob) {
+      const pts = [[(blob.minX + blob.maxX) / 2, (blob.minY + blob.maxY) / 2], [blob.minX + 2, blob.minY + 2], [blob.maxX - 2, blob.maxY - 2], [(blob.minX + blob.maxX) / 2, blob.minY + 3]];
+      for (const [px, py] of pts) {
+        const local = model.toModelPosition(new PIXI.Point(px, py), new PIXI.Point(), true);
+        const hits = [];
+        for (let i = 0; i < count; i++) {
+          if (opacities[i] < 0.01 || !core.getDrawableDynamicFlagIsVisible(i)) continue;
+          const verts = internal.getDrawableVertices(i);
+          const indices = raw.drawables.indices[i];
+          const n = raw.drawables.indexCounts[i];
+          let hit = false;
+          for (let t = 0; t + 2 < n; t += 3) {
+            const a = indices[t] * 2, b = indices[t + 1] * 2, c = indices[t + 2] * 2;
+            if (pointInTri(local.x, local.y, verts[a], verts[a + 1], verts[b], verts[b + 1], verts[c], verts[c + 1])) { hit = true; break; }
+          }
+          if (hit) {
+            hitIds.add(i);
+            hits.push({
+              i, id: ids[i], parentId: rows[i].parentId, blend: rows[i].blend, opacity: +opacities[i].toFixed(3),
+              flags: rows[i].flags, maskCount: rows[i].maskCount, texture: rows[i].texture,
+              multiply: colorOf(raw.drawables.multiplyColors, i), screen: colorOf(raw.drawables.screenColors, i)
+            });
+          }
+        }
+        samples.push({ px, py, local: { x: +local.x.toFixed(1), y: +local.y.toFixed(1) }, hits });
+      }
+    }
+    let nonDefaultMultiply = 0, nonDefaultScreen = 0;
+    for (let i = 0; i < count; i++) {
+      const m = colorOf(raw.drawables.multiplyColors, i);
+      const s = colorOf(raw.drawables.screenColors, i);
+      if (m && (Math.abs(m[0] - 1) > 0.01 || Math.abs(m[1] - 1) > 0.01 || Math.abs(m[2] - 1) > 0.01)) nonDefaultMultiply++;
+      if (s && (Math.abs(s[0]) > 0.01 || Math.abs(s[1]) > 0.01 || Math.abs(s[2]) > 0.01)) nonDefaultScreen++;
+    }
+    notes.push(`colorOverrides multiply ${nonDefaultMultiply} screen ${nonDefaultScreen} hitDrawables ${hitIds.size}`);
+    const noseProbe = [];
+    for (const id of ['ArtMesh246', 'ArtMesh682', 'ArtMesh46']) {
+      const index = ids.indexOf(id);
+      if (index < 0) continue;
+      const uvs = raw.drawables.vertexUvs[index];
+      let minU = 1, minV = 1, maxU = 0, maxV = 0;
+      for (let k = 0; k < uvs.length; k += 2) {
+        minU = Math.min(minU, uvs[k]); maxU = Math.max(maxU, uvs[k]);
+        minV = Math.min(minV, uvs[k + 1]); maxV = Math.max(maxV, uvs[k + 1]);
+      }
+      const source = model.textures[rows[index].texture].baseTexture.resource.source;
+      const scratch = document.createElement('canvas');
+      scratch.width = source.width; scratch.height = source.height;
+      const ctx = scratch.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(source, 0, 0);
+      const samples = [];
+      let alphaSum = 0, rgbSum = 0, countSamples = 0, opaque = 0;
+      for (let gy = 0; gy < 8; gy++) for (let gx = 0; gx < 8; gx++) {
+        const u = minU + (maxU - minU) * (gx + 0.5) / 8;
+        const v = minV + (maxV - minV) * (gy + 0.5) / 8;
+        const x = Math.max(0, Math.min(source.width - 1, Math.round(u * (source.width - 1))));
+        const y = Math.max(0, Math.min(source.height - 1, Math.round((1 - v) * (source.height - 1))));
+        const rgba = Array.from(ctx.getImageData(x, y, 1, 1).data);
+        alphaSum += rgba[3]; rgbSum += rgba[0] + rgba[1] + rgba[2];
+        if (rgba[3] > 250) opaque++;
+        countSamples++;
+        if (samples.length < 4) samples.push({ x, y, rgba });
+      }
+      noseProbe.push({ id, texture: rows[index].texture, uv: [minU, minV, maxU, maxV].map(n => +n.toFixed(4)), meanAlpha: +(alphaSum / countSamples).toFixed(1), meanRgb: +(rgbSum / (countSamples * 3)).toFixed(1), opaque, samples });
+    }
+    function renderWithHidden(indexes) {
+      opacities.set(savedOpacity);
+      for (const index of indexes) opacities[index] = 0;
+      model.deltaTime = 0;
+      app.renderer.backgroundColor = 0xff00ff;
+      app.renderer.render(app.stage);
+      return findArtifacts(app.renderer.gl);
+    }
+    const hideResults = [];
+    if (baseArt.blackBlobs.length) {
+      let shotNo = 5;
+      for (const index of hitIds) {
+        const hidden = renderWithHidden([index]);
+        shots.push(shot(canvas, `0${shotNo}-hide-${ids[index]}`));
+        hideResults.push({ index, id: ids[index], blobs: hidden.blackBlobs.length });
+        shotNo++;
+      }
+    }
+    opacities.set(savedOpacity);
+    model.deltaTime = 0;
+    function pose(name, apply) {
+      apply();
+      core.update();
+      model.deltaTime = 0;
+      app.renderer.render(app.stage);
+      shots.push(shot(canvas, name));
+      return findArtifacts(app.renderer.gl).blackBlobs;
+    }
+    app.renderer.backgroundColor = 0xff00ff;
+    const poseFront = pose('pose-front', () => {
+      core.setParameterValueById('ParamAngleX', 0);
+      core.setParameterValueById('ParamEyeLOpen', 1);
+      core.setParameterValueById('ParamEyeROpen', 1);
+    });
+    const poseRight = pose('pose-right', () => core.setParameterValueById('ParamAngleX', 30));
+    const poseLeft = pose('pose-left', () => core.setParameterValueById('ParamAngleX', -30));
+    const poseBlink = pose('pose-blink', () => {
+      core.setParameterValueById('ParamAngleX', 0);
+      core.setParameterValueById('ParamEyeLOpen', 0);
+      core.setParameterValueById('ParamEyeROpen', 0);
+    });
+    app.renderer.backgroundColor = 0xffffff;
+    const poseWhite = pose('pose-white', () => {
+      core.setParameterValueById('ParamEyeLOpen', 1);
+      core.setParameterValueById('ParamEyeROpen', 1);
+    });
+    app.renderer.backgroundColor = 0x87ceeb;
+    const poseSky = pose('pose-sky', () => {});
+    const report = {
+      notes, samples, hideResults, nonDefaultMultiply, nonDefaultScreen, noseProbe,
+      patch: !patchOff, poseBlobs: { poseFront, poseRight, poseLeft, poseBlink, poseWhite, poseSky },
+      coreVersion: coreApi.Version.csmGetVersion(),
+      latestMoc: coreApi.Version.csmGetLatestMocVersion(),
+      drawableKeys, blendHist,
+      maskContextCount: contexts.length,
+      usingMaskCount: layout.filter(item => item.using).length,
+      zeroLayout, baseArt,
+      whiteArt: { blackBlobs: whiteArt.blackBlobs, blackPixels: whiteArt.blackPixels },
+      noclipArt: { blackBlobs: noclipArt.blackBlobs, blackPixels: noclipArt.blackPixels },
+      multiplyStore: raw.drawables.multiplyColors ? (raw.drawables.multiplyColors.constructor.name + ':' + raw.drawables.multiplyColors.length) : null,
+      screenStore: raw.drawables.screenColors ? (raw.drawables.screenColors.constructor.name + ':' + raw.drawables.screenColors.length) : null,
+    };
+    const response = await fetch('report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...report, shots }) });
+    log('posted', response.status);
+    log(notes.join('\n'));
+    document.title = 'diagnose-done';
+  } catch (error) {
+    log('FAIL', error && error.stack || error);
+    document.title = 'diagnose-fail';
+    await fetch('report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: [String(error && error.stack || error)], shots }) }).catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>

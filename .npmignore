@@ -1,0 +1,7 @@
+node_modules/
+models/
+vendor/
+local.config.json
+test/
+*.tgz
+*.zip
