@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, scr
 import { readFile, writeFile } from 'node:fs/promises';
 import { appendFileSync } from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startViewer } from '../src/viewer-server.js';
 import { createDesktopLink } from '../src/activity.js';
@@ -202,7 +203,7 @@ function buildTray() {
 
 app.whenReady().then(async () => {
   log('APP_READY');
-  const configPath = process.env.DSH_LIVE2D_CONFIG || 'C:\\Users\\huang\\.dsh\\live2d\\config.json';
+  const configPath = process.env.DSH_LIVE2D_CONFIG || path.join(homedir(), '.dsh', 'live2d', 'config.json');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const link = createDesktopLink();
   desktopLink = link;

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { exec } from 'node:child_process';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { blockedPackEntries, rollbackPlan } from '../src/desktop/release.mjs';
 
@@ -22,7 +23,8 @@ test('a plugin pack cannot carry the model, core, or local config', () => {
 });
 
 test('rollback only reinstalls a plugin tarball and names the files it must leave alone', () => {
-  const plan = rollbackPlan({ tarball: 'C:\\Users\\huang\\.dsh\\live2d\\dsh-deepseek-live2d-0.4.1.tgz', cli: 'dsh.cmd' });
+  const tarball = path.join(homedir(), '.dsh', 'live2d', 'dsh-deepseek-live2d-0.4.1.tgz');
+  const plan = rollbackPlan({ tarball, cli: 'dsh.cmd' });
   assert.deepEqual(plan.install.slice(1, 5), ['plugin', '--profile', 'desktop', 'add']);
   assert.equal(plan.install.at(-1).endsWith('dsh-deepseek-live2d-0.4.1.tgz'), true);
   assert.equal(plan.keeps.some(file => file.endsWith('config.json')), true);

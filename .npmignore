@@ -3,5 +3,7 @@ models/
 vendor/
 local.config.json
 test/
+qa/
 *.tgz
 *.zip
+*.bak

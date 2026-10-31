@@ -1,18 +1,17 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { inspectModel } from '../src/model.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const outDir = path.join(root, 'qa');
-const configPath = process.argv[2] || 'C:\\Users\\huang\\.dsh\\live2d\\config.json';
+const configPath = process.argv[2] || path.join(homedir(), '.dsh', 'live2d', 'config.json');
 const config = JSON.parse(await readFile(configPath, 'utf8'));
 const inspected = await inspectModel(config.modelFile);
-const fallbackPkg = 'C:/Users/huang/Documents/Codex/2026-10-30/referenced-chatgpt-conversation-this-is-an-4/outputs/dsh-deepseek-live2d/package.json';
-const require = createRequire(existsSync(path.join(root, 'node_modules/pixi.js/package.json')) ? path.join(root, 'package.json') : fallbackPkg);
+const require = createRequire(path.join(root, 'package.json'));
 const pixi = path.resolve(path.dirname(require.resolve('pixi.js')), '../browser/pixi.min.js');
 const live2d = path.join(path.dirname(require.resolve('pixi-live2d-display')), 'cubism4.min.js');
 const staticFiles = new Map([

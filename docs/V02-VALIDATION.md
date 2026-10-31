@@ -38,8 +38,8 @@
 
 ## 安装与数据
 
-- 插件：`C:\Users\huang\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d`。
-- 模型/配置/Core/存档：`C:\Users\huang\.dsh\live2d`。
+- 插件：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d`。
+- 模型/配置/Core/存档：`%USERPROFILE%\.dsh\live2d`。
 - 存档：该目录下 `preferences.json`；修改采用数值校验、串行写入与同目录临时文件原子替换。
 - 最终本地安装包：`dsh-deepseek-live2d-0.2.0-desktop.tgz`，置于上述私有目录。
 - 0.1.2 旧包保留，可用于回滚；V0.2 升级前配置另备份在私有目录 `backups/desktop-before-v02`。

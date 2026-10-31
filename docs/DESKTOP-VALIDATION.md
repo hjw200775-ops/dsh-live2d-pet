@@ -4,12 +4,12 @@
 
 ## 实际安装位置
 
-- 插件：`C:\Users\huang\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d`。
-- 本地配置：`C:\Users\huang\.dsh\live2d\config.json`。
-- 模型：`C:\Users\huang\.dsh\live2d\deepseek-chan`。
-- Core：`C:\Users\huang\.dsh\live2d\live2dcubismcore.min.js`。
-- 安装包：`C:\Users\huang\.dsh\live2d\dsh-deepseek-live2d-0.1.2-desktop.tgz`。
-- 安装前备份：`C:\Users\huang\.dsh\live2d\backups\desktop-before-20261030`，包含原 `package.json`、`cordis.patch.yml`、`pnpm-lock.yaml`。
+- 插件：`%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-deepseek-live2d`。
+- 本地配置：`%USERPROFILE%\.dsh\live2d\config.json`。
+- 模型：`%USERPROFILE%\.dsh\live2d\deepseek-chan`。
+- Core：`%USERPROFILE%\.dsh\live2d\live2dcubismcore.min.js`。
+- 安装包：`%USERPROFILE%\.dsh\live2d\dsh-deepseek-live2d-0.1.2-desktop.tgz`。
+- 安装前备份：`%USERPROFILE%\.dsh\live2d\backups\desktop-before-20261030`，包含原 `package.json`、`cordis.patch.yml`、`pnpm-lock.yaml`。
 
 私有模型和 Core 在 DSH 数据目录内，日常启动不依赖此次 Codex 工作区。模型入口复制前后 SHA-256 相同，原 JSON 未被修改。原模型英日使用指南一并保存在私有目录。交付安装包和源码 ZIP 不含模型、纹理、PSD、Core 或本机配置。
 

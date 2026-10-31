@@ -1,3 +1,8 @@
+import { homedir } from 'node:os';
+import path from 'node:path';
+
+const home = homedir();
+
 const BLOCKED = [
   /\.moc3$/i,
   /\.png$/i,
@@ -12,10 +17,10 @@ const BLOCKED = [
 ];
 
 export const LOCAL_KEEPS = [
-  'C:\\Users\\huang\\.dsh\\live2d\\config.json',
-  'C:\\Users\\huang\\.dsh\\live2d\\deepseek-chan',
-  'C:\\Users\\huang\\.dsh\\live2d\\live2dcubismcore.min.js',
-  'C:\\Users\\huang\\.dsh\\profiles\\desktop\\cordis.patch.yml',
+  path.join(home, '.dsh', 'live2d', 'config.json'),
+  path.join(home, '.dsh', 'live2d', 'deepseek-chan'),
+  path.join(home, '.dsh', 'live2d', 'live2dcubismcore.min.js'),
+  path.join(home, '.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
 ];
 
 export function blockedPackEntries(entries) {
