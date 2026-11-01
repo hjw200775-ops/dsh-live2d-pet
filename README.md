@@ -27,7 +27,7 @@ Windows 上 `dsh` **通常不在 PATH 里**，直接敲会提示"无法识别"�
 ```powershell
 # 假设 DSH 装在 F:\dsh1（换成你自己的安装目录）
 $dsh = "F:\dsh1\resources\runtime\cli\bin\dsh.cmd"
-& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.9
+& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.10
 ```
 
 不想用命令行的话，直接在 DSH 的 **设置 → 插件** 里装也行，效果一样。
@@ -36,16 +36,16 @@ $dsh = "F:\dsh1\resources\runtime\cli\bin\dsh.cmd"
 
 ```powershell
 # 推荐：指定版本，避免刚发布时缓存滞后装到旧版
-& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.9
+& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.10
 
 # 或从 Release 里的 tgz
-& $dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.9.tgz'
+& $dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.10.tgz'
 
 # 或直接从 GitHub 源码装
 & $dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 ```
 
-**0.6.9 起安装是干净的：** 依赖里不再有 `electron`，也没有 `postinstall`，所以不会出现
+**0.6.9 起（当前 0.6.10）安装是干净的：** 依赖里不再有 `electron`，也没有 `postinstall`，所以不会出现
 `Ignored build scripts`，命令正常返回 0，插件管理器才会把这一层挂进 `dsh.profile.bundles`。
 
 > 0.6.8 及更早会返回退出码 1，于是出现"包装了、层没挂上、桌宠永远不出现"的问题——必须手改 bundles 才行。
