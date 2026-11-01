@@ -98,8 +98,8 @@ test('所有源都失败时报出每个源的原因', async () => {
 });
 
 test('缓存目录按版本分，多个 profile 共用一份', () => {
-  const dir = electronCacheDir({ home: 'C:/Users/x', version: VERSION });
-  assert.equal(dir, path.join('C:/Users/x', '.dsh', 'live2d', 'electron', 'v33.4.11'));
+  const dir = electronCacheDir({ home: 'X:/fake-home', version: VERSION });
+  assert.equal(dir, path.join('X:/fake-home', '.dsh', 'live2d', 'electron', 'v33.4.11'));
 });
 
 test('三个平台的可执行文件位置', () => {

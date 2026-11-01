@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-live2d",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "description": "DSH 桌宠：装完重开 DSH 就自动出现独立透明桌面窗口。模型首次启动自动下载；Live2D Cubism Core 因授权限制需自行获取。",
   "type": "module",
   "main": "src/index.js",
@@ -11,6 +11,8 @@
   },
   "bin": {
     "dsh-live2d-setup": "scripts/setup.mjs",
+    "dsh-live2d-doctor": "scripts/doctor.mjs",
+    "dsh-live2d-import-core": "scripts/import-core.mjs",
     "dsh-live2d-fetch-model": "scripts/fetch-model.mjs",
     "dsh-live2d-desktop": "scripts/desktop.mjs"
   },

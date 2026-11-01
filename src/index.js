@@ -4,8 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startViewer } from './viewer-server.js';
 import {createActivity} from './activity.js';
-import {createBalance} from './balance.mjs';
-import {startBridgePublisher} from './bridge.mjs';
+import { createBalance } from './balance.mjs';
+import { startBridgePublisher } from './bridge.mjs';
+import { createFileLogger } from './log-file.mjs';
 import { launchDesktopPet, prepareAssets } from './provision.mjs';
 
 export const name = 'deepseek-live2d';
@@ -59,7 +60,8 @@ export async function resolveModelConfig(config = {}, { env = process.env, home 
 export async function apply(ctx, config = {}) {
   if (ctx.webServer.host && ctx.webServer.host !== '127.0.0.1') throw new Error('Live2D 私有模型仅支持监听 127.0.0.1 的 DSH 宿主');
   const pluginRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
-  const log = message => console.error(message);
+  // 宿主侧的日志也落盘：Electron 下载失败、模型下载失败都只发生在这里
+  const log = createFileLogger({ name: 'host' }).log;
   let { configDir, configFile, local } = await resolveModelConfig(config);
 
   // 首次安装的机器上没有模型：这里自动补齐（Core 受授权限制，只能提示用户自己放）。

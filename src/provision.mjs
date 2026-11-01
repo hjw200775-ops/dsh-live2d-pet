@@ -2,15 +2,17 @@ import { spawn } from 'node:child_process';
 import { access, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { checkCore, CORE_DOWNLOAD_PAGE, CORE_FILE } from './core.mjs';
 import { ensureElectronBinary } from './electron-binary.mjs';
 import { findElectron, startDesktopPet } from './launch-desktop.mjs';
+
+// 这些从 core.mjs 来，这里继续导出，老的引用不会断
+export { checkCore, CORE_DOWNLOAD_PAGE, CORE_FILE };
 
 /** 模型入口（与 fetch-model 解压后的目录一致）。 */
 export const MODEL_ENTRY = path.join('DeepSeek-chan', '大肥鱼.model3.json');
 /** 大小写不敏感文件系统上的历史目录名，两种都要认。 */
 export const MODEL_ENTRY_LEGACY = path.join('deepseek-chan', '大肥鱼.model3.json');
-export const CORE_FILE = 'live2dcubismcore.min.js';
-export const CORE_DOWNLOAD_PAGE = 'https://www.live2d.com/en/sdk/download/web/';
 
 export async function exists(file) {
   try { await access(file); return true; } catch { return false; }
@@ -140,14 +142,6 @@ export async function ensureModel({ pluginRoot, dest, env = process.env, log = (
     return { ready: true, fetched: true };
   }
   return { ready: false, reason: `model-fetch-failed(${result?.code ?? result?.error?.message ?? 'error'})` };
-}
-
-/** Cubism Core 有独立授权，不能随包分发也不能替用户自动下载，只能检查并给出明确指引。 */
-export async function checkCore({ coreFile, configDir }) {
-  if (coreFile && (await exists(coreFile))) return { ready: true, coreFile };
-  const fallback = path.join(configDir, CORE_FILE);
-  if (await exists(fallback)) return { ready: true, coreFile: fallback };
-  return { ready: false, expected: fallback, hint: `把 ${CORE_FILE} 放到 ${configDir}` };
 }
 
 function autoFetchDisabled(config, local, env) {

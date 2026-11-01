@@ -1,18 +1,24 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog } from 'electron';
-import { readFile, writeFile } from 'node:fs/promises';
-import { appendFileSync } from 'node:fs';
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog, shell } from 'electron';
+import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startViewer } from '../src/viewer-server.js';
 import { createDesktopLink } from '../src/activity.js';
+import { createFileLogger } from '../src/log-file.mjs';
 import { movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { loadDesktopPreferences, placeBounds, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
 import { rendererRecovery, wakeWindow, acceptPetIpc } from '../src/desktop/session.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const logFile = process.env.DSH_DESKTOP_LOG;
-const log = line => { if (logFile) appendFileSync(logFile, line + '\n'); console.log(line); };
+// 日志默认落盘到 ~/.dsh/live2d/logs/：用户出问题时能把文件直接发过来，不用复述"闪一下就没了"
+const fileLogger = process.env.DSH_DESKTOP_LOG
+  ? createFileLogger({ file: process.env.DSH_DESKTOP_LOG })
+  : createFileLogger({ name: 'desktop' });
+const log = fileLogger.log;
+const logDir = fileLogger.dir;
+// 不设名字的话，未打包的 Electron 会用公共目录 %APPDATA%\Electron，和别的应用互相覆盖
+app.setName('DeepSeek-chan');
 if (process.env.DSH_DESKTOP_USER_DATA) app.setPath('userData', process.env.DSH_DESKTOP_USER_DATA);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -195,6 +201,7 @@ function buildTray() {
       if (!windowRef.isDestroyed()) windowRef.webContents.send('desktop:quit-with-host', quitWithHost);
     } },
     { type: 'separator' },
+    { label: '打开日志目录', click: () => { void shell.openPath(logDir); } },
     { label: '退出', click: () => app.quit() },
   ]);
   tray.setToolTip('DeepSeek-chan');
@@ -229,7 +236,16 @@ process.on('uncaughtException', fatal);
 process.on('unhandledRejection', fatal);
 
 app.whenReady().then(async () => {
-  log('APP_READY');
+  log(`APP_READY log=${fileLogger.file}`);
+  // 老版本没设 app 名，配置存在公共目录 %APPDATA%\Electron；换了名字之后把旧的位置搬过来
+  try {
+    const target = preferencesFile();
+    const legacy = path.join(app.getPath('appData'), 'Electron', 'desktop-preferences.json');
+    if (target !== legacy && !(await readFile(target).then(() => true, () => false)) && (await readFile(legacy).then(() => true, () => false))) {
+      await copyFile(legacy, target);
+      log(`PREFS_MIGRATED ${legacy} -> ${target}`);
+    }
+  } catch { /* 迁移失败不影响启动，最多位置回到默认 */ }
   const configPath = process.env.DSH_LIVE2D_CONFIG || path.join(homedir(), '.dsh', 'live2d', 'config.json');
   const config = await loadConfig(configPath);
   const link = createDesktopLink();

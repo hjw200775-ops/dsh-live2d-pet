@@ -64,6 +64,17 @@ $dsh = "F:\dsh1\resources\runtime\cli\bin\dsh.cmd"
 这一步没法自动化：Core 有独立授权，既不能随包分发，也不适合让插件替用户接受协议。
 **没放也不影响启动**：桌面窗口会照常出现，并在窗口正中显示一张大字卡片，写清缺什么、去哪下载。
 
+手里已经有 Core（比如别的插件带的、或之前下过）就不用重下，直接导入：
+
+```powershell
+npx dsh-live2d-import-core "C:\下载\live2dcubismcore.min.js"
+# 也可以给包含它的目录
+npx dsh-live2d-import-core "C:\下载\core解压目录"
+```
+
+它会先检查文件大小和特征字符串（防止把浏览器下到的 404 页面当成 Core），再复制到约定目录，
+旧的会自动备份成 `.bak-时间戳`。
+
 ### 3. 重新打开 DSH
 
 **应用 → 退出**（别只关窗口、别只刷新），再启动。首次启动时插件会依次：
@@ -107,6 +118,19 @@ npx dsh-live2d-setup
 模型包（48 MB）走的是 `api.github.com`，脚本自带直链回退；如果两条都不通，可以手动从
 [Releases](https://github.com/hjw200775-ops/dsh-live2d-pet-/releases) 下载模型 zip，解压到
 `~/.dsh/live2d`（应得到 `~/.dsh/live2d/DeepSeek-chan/大肥鱼.model3.json`）。
+
+### 3.2 出问题了：先跑自检
+
+```powershell
+npx dsh-live2d-doctor
+```
+
+一次查完：插件版本、配置文件、模型文件（纹理/动作/表情数量）、Core 是否真的是 Core、
+Electron 运行时、桌面窗口是否在跑。有问题的地方会标 ✖ 并写明下一步怎么做，
+最后附一段「复制给作者」的摘要——报问题直接粘这段，比描述“它就是不出现”有用一百倍。
+
+日志也和以前不一样了：**现在会落盘**到 `~/.dsh/live2d/logs/`（按天分文件，保留最近 5 份）。
+桌面窗口的托盘右键菜单里有「打开日志目录」，出问题一键打开就能把文件发出来。
 
 ### 4. 可选配置
 
