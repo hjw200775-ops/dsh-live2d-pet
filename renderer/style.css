@@ -2,6 +2,9 @@
 main{position:absolute;inset:0}
 canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}
 #status{position:absolute;left:12px;right:12px;bottom:52px;margin:0;padding:8px 10px;border-radius:10px;background:#182334e8;color:#eee;font-size:12px;white-space:pre-wrap}
+/* 出错时不要缩在角落一行小字：居中放大、加深背景，让人一眼知道缺什么、去哪补。 */
+#status.error{left:50%;top:50%;right:auto;bottom:auto;transform:translate(-50%,-50%);width:min(430px,86%);padding:18px 20px 20px;border-radius:16px;background:#0e1727f5;border:1px solid #ffffff2e;box-shadow:0 18px 48px #000a;color:#f2f6ff;font-size:15px;line-height:1.65;white-space:pre-wrap;word-break:break-word;pointer-events:auto;user-select:text}
+#status.error::first-line{font-weight:700;font-size:17px;letter-spacing:.02em}
 #status[hidden]{display:none}
 #bubble{position:absolute;left:50%;top:6%;transform:translateX(-50%);max-width:78%;margin:0;padding:7px 12px;border-radius:14px;background:#fffe;color:#243044;font-size:13px;line-height:1.35;pointer-events:none;box-shadow:0 6px 16px #0002}
 #bubble[hidden]{display:none}

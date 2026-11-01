@@ -42,53 +42,49 @@ test('Electron 宿主里跑脚本要补 ELECTRON_RUN_AS_NODE，其它环境不�
   assert.equal(asNode.ELECTRON_RUN_AS_NODE, undefined);
 });
 
-test('Electron 已就绪时不再跑安装脚本', async () => {
+test('node_modules 里已有 electron 时直接复用，不再下载', async () => {
   const root = await fakePluginRoot();
-  let ran = 0;
+  let downloads = 0;
   try {
     const result = await ensureElectron({
       pluginRoot: root,
       deps: {
         findElectron: () => 'C:/electron/electron.exe',
-        runNodeScript: async () => { ran++; return { ok: true }; },
+        ensureElectronBinary: async () => { downloads++; return { electron: 'C:/cache/electron.exe' }; },
       },
     });
-    assert.deepEqual(result, { ready: true, electron: 'C:/electron/electron.exe', installed: false });
-    assert.equal(ran, 0);
+    assert.deepEqual(result, { ready: true, electron: 'C:/electron/electron.exe', installed: false, legacy: true });
+    assert.equal(downloads, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('Electron 二进制缺失时自动补跑 install.js 并重新解析', async () => {
-  const root = await fakePluginRoot();
+test('没有现成 electron 时走插件自建下载器', async () => {
+  const root = await fakePluginRoot({ withElectronPackage: false });
   const calls = [];
-  let installed = false;
   try {
     const result = await ensureElectron({
       pluginRoot: root,
       deps: {
-        findElectron: () => (installed ? 'C:/electron/electron.exe' : null),
-        runNodeScript: async options => {
+        findElectron: () => null,
+        ensureElectronBinary: async options => {
           calls.push(options);
-          installed = true;
-          return { ok: true, code: 0 };
+          return { electron: path.join('cache', 'electron', 'v33.4.11', 'electron.exe'), downloaded: true };
         },
       },
     });
     assert.equal(result.ready, true);
     assert.equal(result.installed, true);
+    assert.equal(result.electron, path.join('cache', 'electron', 'v33.4.11', 'electron.exe'));
     assert.equal(calls.length, 1);
-    assert.ok(calls[0].script.endsWith('install.js'));
-    // 安装脚本必须在 electron 包目录里跑，才能解析它自己的依赖
-    assert.ok(calls[0].cwd.endsWith(path.join('node_modules', 'electron')));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('安装脚本失败时给出可读原因，不抛异常', async () => {
-  const root = await fakePluginRoot();
+test('下载失败时给出可读原因并提示镜像，不抛异常', async () => {
+  const root = await fakePluginRoot({ withElectronPackage: false });
   const lines = [];
   try {
     const result = await ensureElectron({
@@ -96,23 +92,12 @@ test('安装脚本失败时给出可读原因，不抛异常', async () => {
       log: line => lines.push(line),
       deps: {
         findElectron: () => null,
-        runNodeScript: async () => ({ ok: false, code: 1 }),
+        ensureElectronBinary: async () => { throw new Error('fetch failed'); },
       },
     });
     assert.equal(result.ready, false);
-    assert.match(result.reason, /electron-install-failed/);
+    assert.match(result.reason, /electron-download-failed/);
     assert.ok(lines.some(line => line.includes('ELECTRON_MIRROR')), '失败时要提示镜像方案');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('连 electron 包都没有时报告 electron-package-missing', async () => {
-  const root = await fakePluginRoot({ withElectronPackage: false });
-  try {
-    const result = await ensureElectron({ pluginRoot: root, deps: { findElectron: () => null } });
-    assert.equal(result.ready, false);
-    assert.equal(result.reason, 'electron-package-missing');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -254,10 +239,15 @@ test('Electron 拉不起来时不假装已启动', async () => {
       configDir: path.join(root, 'live2d'),
       local: { modelFile: 'x.model3.json' },
       log: () => {},
-      deps: { electron: { findElectron: () => null } },
+      deps: {
+        electron: {
+          findElectron: () => null,
+          ensureElectronBinary: async () => { throw new Error('网络不通'); },
+        },
+      },
     });
     assert.equal(result.started, false);
-    assert.equal(result.reason, 'electron-package-missing');
+    assert.match(result.reason, /electron-download-failed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

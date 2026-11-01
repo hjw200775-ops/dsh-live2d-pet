@@ -34,7 +34,8 @@ import('./viewer.js').catch(error=>{
   const status=document.getElementById('status');
   if(!status)return;
   status.hidden=false;
-  status.textContent=`加载失败：${error.message||error}`;
+  status.classList.add('error');
+  status.textContent=`桌宠没能启动\n\n${error.message||error}`;
 });
 </script>
 </body></html>

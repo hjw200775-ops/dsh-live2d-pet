@@ -14,7 +14,7 @@ import { createFidget } from './runtime/fidget.mjs';
   let preferences={version:1,model:{zoom:1,x:0,y:0}},zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
-  function fail(e){status.hidden=false;status.textContent=`加载失败：${e.message||e}\n请检查本地模型、Core 和 WebGL。`;}
+  function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
   const persist=()=>{
     if(!preferencesLoaded)return Promise.resolve();
     clearTimeout(saveTimer);preferences.model={zoom,x,y};

@@ -20,28 +20,38 @@ DSH（DeepSeek Harness）的 Live2D 桌宠：跟随助手运行状态切换动�
 
 ## 安装
 
+### 0. 先找到 `dsh` 命令
+
+Windows 上 `dsh` **通常不在 PATH 里**，直接敲会提示"无法识别"。它就在 DSH 安装目录下：
+
+```powershell
+# 假设 DSH 装在 F:\dsh1（换成你自己的安装目录）
+$dsh = "F:\dsh1\resources\runtime\cli\bin\dsh.cmd"
+& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.9
+```
+
+不想用命令行的话，直接在 DSH 的 **设置 → 插件** 里装也行，效果一样。
+
 ### 1. 装插件
 
 ```powershell
 # 推荐：指定版本，避免刚发布时缓存滞后装到旧版
-dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.8
-
-# 或不指定版本（发布早期可能解析到旧版本，见下方注意）
-dsh plugin --profile desktop add dsh-deepseek-live2d
+& $dsh plugin --profile desktop add dsh-deepseek-live2d@0.6.9
 
 # 或从 Release 里的 tgz
-dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.8.tgz'
+& $dsh plugin --profile desktop add '<绝对路径>\dsh-deepseek-live2d-0.6.9.tgz'
 
 # 或直接从 GitHub 源码装
-dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
+& $dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 ```
 
-**两个常见误会，先说清楚：**
+**0.6.9 起安装是干净的：** 依赖里不再有 `electron`，也没有 `postinstall`，所以不会出现
+`Ignored build scripts`，命令正常返回 0，插件管理器才会把这一层挂进 `dsh.profile.bundles`。
 
-- **装完看到 `Ignored build scripts: electron`、退出码是 1** —— 这是 pnpm 默认拦截依赖的构建脚本，**包其实已经装好了**。
-  插件首次启动会自己补装 Electron；想当场补好见第 3 步。GUI 里如果显示成“失败”，忽略即可。
-- **刚发布后按包名装，拿到的可能还是上一版** —— pnpm 的元数据缓存会滞后几分钟到几小时。
-  想立刻拿到新版就**指定版本号**（`@0.6.8`）或直接用 Release 里的 tgz。
+> 0.6.8 及更早会返回退出码 1，于是出现"包装了、层没挂上、桌宠永远不出现"的问题——必须手改 bundles 才行。
+> 如果你踩过这个坑，`~/.dsh/profiles/desktop/pnpm-workspace.yaml` 里可能被写进了
+> `onlyBuiltDependencies: electron: "set this to true or false"` 这类占位符。0.6.9 不需要任何构建审批，
+> 把整个 `onlyBuiltDependencies` 段删掉即可。
 
 ### 2. 放 Core（唯一需要手动的一步）
 
@@ -52,13 +62,14 @@ dsh plugin --profile desktop add github:hjw200775-ops/dsh-live2d-pet-
 ```
 
 这一步没法自动化：Core 有独立授权，既不能随包分发，也不适合让插件替用户接受协议。
+**没放也不影响启动**：桌面窗口会照常出现，并在窗口正中显示一张大字卡片，写清缺什么、去哪下载。
 
 ### 3. 重新打开 DSH
 
 **应用 → 退出**（别只关窗口、别只刷新），再启动。首次启动时插件会依次：
 
 1. 自动下载模型包（约 48 MB，校验 sha256 后解压到 `~/.dsh/live2d`）；
-2. 自动补装 Electron 运行时（约 100 MB）；
+2. 自动下载 Electron 运行时（约 100 MB，解压到 `~/.dsh/live2d/electron/v33.4.11`，多个 profile 共用一份）；
 3. 拉起独立透明桌面窗口。
 
 两个下载都只做一次，之后每次启动都是秒开；进度会打在 DSH 控制台里（`[live2d] …`）。
@@ -80,8 +91,11 @@ npx dsh-live2d-setup --plugin "$env:USERPROFILE\.dsh\profiles\desktop\node_modul
 
 ### 3.1 Electron 下载慢或失败（国内网络）
 
-Electron 的二进制是安装脚本从 GitHub 拉的，国内网络可能很慢甚至超时。换镜像即可
-（`@electron/get` 认这个环境变量，不用改代码）；设好后再触发一次补装：
+Electron 的二进制由插件自己下载，**并且会自动切换镜像，通常不用管**：先试 GitHub，
+卡住 20 秒不动或报错就自动换 `npmmirror`，下载完做 sha256 校验。
+（实测国内 GitHub 直连经常直接失败，镜像约 25 秒下完；插件内默认顺序就是 GitHub → npmmirror。）
+
+想强制指定某个源（例如公司内网镜像），再设环境变量：
 
 ```powershell
 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
@@ -105,7 +119,8 @@ npx dsh-live2d-setup
     autoFetchModel: false # 关掉首次自动下载，改由 dsh-live2d-setup 手动触发
 ```
 
-也可以写 `~/.dsh/live2d/config.json` 指向自己的模型与 Core：
+也可以写 `~/.dsh/live2d/config.json` 指向自己的模型与 Core（**可选**：没有这个文件时，
+桌面窗口会按约定路径 `~/.dsh/live2d` 自动找，0.6.8 及更早缺这个文件会直接起不来）：
 
 ```json
 {

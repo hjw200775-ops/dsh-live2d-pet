@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { access, readdir, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { ensureElectronBinary } from './electron-binary.mjs';
 import { findElectron, startDesktopPet } from './launch-desktop.mjs';
 
 /** 模型入口（与 fetch-model 解压后的目录一致）。 */
@@ -99,31 +99,28 @@ export async function runNodeScript({
   });
 }
 
-/** Electron 的二进制不随 npm 包下发（postinstall 去下载），pnpm 默认又会拦构建脚本，所以这里补跑一次。 */
-export async function ensureElectron({ pluginRoot, env = process.env, log = () => {}, timeoutMs, deps = {} }) {
+/**
+ * 确保 Electron 可用。
+ *
+ * 优先用 node_modules 里现成的（老版本装过的机器，避免重复下载约 100 MB）；
+ * 没有就由插件自己下载解压到 ~/.dsh/live2d/electron/v<版本>/（多个 profile 共用一份）。
+ * 依赖里不再放 electron，安装才不会因为 pnpm 拦构建脚本而返回非零退出码。
+ */
+export async function ensureElectron({ pluginRoot, env = process.env, home, log = () => {}, deps = {} }) {
   const finder = deps.findElectron || findElectron;
-  const run = deps.runNodeScript || runNodeScript;
-  const found = finder(pluginRoot);
-  if (found) return { ready: true, electron: found, installed: false };
+  const legacy = finder(pluginRoot);
+  if (legacy) return { ready: true, electron: legacy, installed: false, legacy: true };
 
-  let packageDir = null;
+  const ensureBinary = deps.ensureElectronBinary || ensureElectronBinary;
   try {
-    packageDir = path.dirname(createRequire(path.join(pluginRoot, 'package.json')).resolve('electron/package.json'));
-  } catch { /* 依赖没装全，下面统一报错 */ }
-  const installer = packageDir ? path.join(packageDir, 'install.js') : null;
-  if (!installer || !(await exists(installer))) return { ready: false, reason: 'electron-package-missing' };
-
-  log('[live2d] 首次启动：正在准备 Electron 运行时（约 100 MB，只需一次，请稍候）…');
-  const result = await run({ script: installer, cwd: packageDir, env, timeoutMs, log, spawnProcess: deps.spawnProcess, isElectron: deps.isElectron });
-  const after = finder(pluginRoot);
-  if (after) {
-    log('[live2d] Electron 运行时已就绪。');
-    return { ready: true, electron: after, installed: true };
+    const result = await ensureBinary({ home, env, log, deps: deps.binary || {} });
+    return { ready: true, electron: result.electron, installed: true };
+  } catch (error) {
+    log('[live2d] Electron 下载/安装失败。');
+    log('[live2d]   国内网络可以换镜像后重试：$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"');
+    log(`[live2d]   原因：${error?.message || error}`);
+    return { ready: false, reason: `electron-download-failed(${error?.message || error})` };
   }
-  log('[live2d] Electron 下载/安装失败。国内网络可以换镜像后重试：');
-  log('[live2d]   $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"');
-  log('[live2d]   然后在 profile 目录执行：npx dsh-live2d-setup');
-  return { ready: false, reason: `electron-install-failed(${result?.code ?? result?.error?.message ?? 'error'})` };
 }
 
 /** 模型包不随 npm 包下发，首次启动时自动从 Release 下载并校验 sha256。 */
@@ -182,7 +179,7 @@ export async function launchDesktopPet({ pluginRoot, configFile, env = process.e
     return { started: false, reason: electron.reason, electron };
   }
   const launch = deps.startDesktopPet || startDesktopPet;
-  const launched = launch({ pluginRoot, configFile, env, ...(deps.spawnProcess ? { spawnProcess: deps.spawnProcess } : {}) });
+  const launched = launch({ pluginRoot, configFile, env, electron: electron.electron, ...(deps.spawnProcess ? { spawnProcess: deps.spawnProcess } : {}) });
   if (launched.started) log('[live2d] 桌宠窗口已拉起。');
   else log(`[live2d] 桌宠窗口没有启动：${launched.reason}`);
   return { ...launched, electron };

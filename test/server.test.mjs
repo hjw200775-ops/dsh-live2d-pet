@@ -51,5 +51,23 @@ test('private viewer serves only model references and generated Idle without edi
 test('missing assets report an explicit configuration failure', async t => {
   const viewer = await startViewer({}); t.after(()=>viewer.close());
   const status = await fetch(new URL('status.json', viewer.url)).then(r=>r.json());
-  assert.equal(status.ok,false); assert.match(status.error,/modelFile/);
+  assert.equal(status.ok,false);
+  // 缺模型时要说人话：说清缺什么、给下载入口，而不是只报 modelFile 未设置
+  assert.match(status.error,/模型/);
+  assert.match(status.error,/releases/);
+});
+
+test('缺 Core 时的报错点名 Core 并给官方下载页', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'live2d-core-'));
+  await mkdir(path.join(dir, 'DeepSeek-chan'), { recursive: true });
+  const entry = path.join(dir, 'DeepSeek-chan', '大肥鱼.model3.json');
+  await writeFile(entry, JSON.stringify({ Version: 3, FileReferences: { Moc: '大肥鱼.moc3', Textures: ['t.png'] } }));
+  await writeFile(path.join(dir, 'DeepSeek-chan', '大肥鱼.moc3'), Buffer.from('MOC3xxxx'));
+  await writeFile(path.join(dir, 'DeepSeek-chan', 't.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const viewer = await startViewer({ modelFile: entry, configDir: dir });
+  t.after(async () => { await viewer.close(); await rm(dir, { recursive: true, force: true }); });
+  const status = await fetch(new URL('status.json', viewer.url)).then(r=>r.json());
+  assert.equal(status.ok, false);
+  assert.match(status.error, /Cubism Core/);
+  assert.match(status.error, /live2d\.com/);
 });

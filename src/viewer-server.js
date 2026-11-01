@@ -21,11 +21,27 @@ export async function startViewer(config) {
   const streams=new Set();let telemetry=null;
   let state, failure;
   try {
-    if (!config.modelFile || !config.coreFile) throw new Error('未找到 modelFile / coreFile：请先运行 npx dsh-live2d-fetch-model（默认解压到 ~/.dsh/live2d），并把 live2dcubismcore.min.js 放到同一目录，然后重启 DSH');
+    if (!config.modelFile) throw new Error(
+      '缺少 Live2D 模型。\n\n' +
+      '· 首次启动会自动下载（约 48 MB）；下载失败时可以手动取模型包：\n' +
+      '  https://github.com/hjw200775-ops/dsh-live2d-pet-/releases\n' +
+      '· 解压后应得到：~/.dsh/live2d/DeepSeek-chan/大肥鱼.model3.json',
+    );
+    if (!config.coreFile) throw new Error(
+      '缺少 Live2D Cubism Core（live2dcubismcore.min.js）。\n\n' +
+      '· Core 有独立授权、不随插件分发，需从官网下载（免费）：\n' +
+      '  https://www.live2d.com/en/sdk/download/web/\n' +
+      `· 下载后放到：${config.configDir || '~/.dsh/live2d'}/live2dcubismcore.min.js`,
+    );
     if (!path.isAbsolute(config.modelFile) || !path.isAbsolute(config.coreFile)) throw new Error('modelFile 和 coreFile 必须使用绝对路径');
     state = await inspectModel(config.modelFile);
     config.coreFile = await realpath(config.coreFile);
-  } catch (e) { failure = e.message; }
+  } catch (e) {
+    // 文件在但读不了（被移走 / 权限）时也给人话，而不是裸 ENOENT。
+    failure = e.code === 'ENOENT'
+      ? `找不到文件：${e.path || e.message}\n\n请确认模型与 Core 都在 ~/.dsh/live2d 下，或修正 config.json 里的路径。`
+      : e.message;
+  }
   const staticFiles = new Map(['index.html', 'viewer.js', 'style.css', 'cubism-color.js'].map(n => [n, path.join(renderer, n)]));
   staticFiles.set('runtime/motion-policy.mjs', fileURLToPath(new URL('./runtime/motion-policy.mjs', import.meta.url)));
   staticFiles.set('runtime/model-hit.mjs', fileURLToPath(new URL('./runtime/model-hit.mjs', import.meta.url)));

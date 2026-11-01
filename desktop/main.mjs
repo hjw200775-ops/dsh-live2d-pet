@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen } from 'electron';
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { appendFileSync } from 'node:fs';
 import path from 'node:path';
@@ -201,13 +201,40 @@ function buildTray() {
   tray.setContextMenu(menu);
 }
 
+/**
+ * 读插件配置。config.json 不存在是正常情况（约定路径即可），
+ * 以前这里直接 JSON.parse 抛错，窗口不创建、进程也不退出，留下一堆无窗口的僵尸 Electron
+ * 占着几百 MB 内存。现在缺文件就回落到约定路径，其它错误才抛。
+ */
+async function loadConfig(configPath) {
+  try {
+    return JSON.parse(await readFile(configPath, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw new Error(`配置文件读不了（${configPath}）：${error.message}`);
+    const { resolveModelConfig } = await import('../src/index.js');
+    const resolved = await resolveModelConfig({ configFile: configPath });
+    log(`CONFIG_FALLBACK ${configPath}`);
+    return resolved.local;
+  }
+}
+
+function fatal(error) {
+  const text = error && error.stack || String(error);
+  log('APP_FAIL ' + text);
+  try { dialog.showErrorBox('DeepSeek-chan 桌宠没有启动', `${error?.message || error}\n\n详见控制台日志（[live2d]/APP_FAIL）。`); } catch { /* 没有图形环境就算了 */ }
+  try { app.exit(1); } catch { /* 已在退出 */ }
+}
+
+process.on('uncaughtException', fatal);
+process.on('unhandledRejection', fatal);
+
 app.whenReady().then(async () => {
   log('APP_READY');
   const configPath = process.env.DSH_LIVE2D_CONFIG || path.join(homedir(), '.dsh', 'live2d', 'config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const config = await loadConfig(configPath);
   const link = createDesktopLink();
   desktopLink = link;
-  viewer = await startViewer({ modelFile: config.modelFile, coreFile: config.coreFile, activity: link, bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json') });
+  viewer = await startViewer({ modelFile: config.modelFile, coreFile: config.coreFile, configDir: process.env.DSH_LIVE2D_CONFIG_DIR || path.dirname(configPath), activity: link, bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json') });
   const saved = await loadDesktopPreferences(preferencesFile());
   const placed = placeBounds(saved, displays());
   windowRef = createWindow(placed);
@@ -300,7 +327,7 @@ app.whenReady().then(async () => {
       log('CHECK_FAIL ' + (error && error.stack || error));
       setTimeout(() => app.quit(), 500);
     }
-}).catch(error => log('APP_FAIL ' + (error && error.stack || error)));
+}).catch(fatal);
 
 let quitting = false;
 app.on('before-quit', () => {

@@ -1,28 +1,31 @@
 #!/usr/bin/env node
 /**
- * 启动独立桌面窗口版桌宠（透明、置顶、覆盖整个桌面）。
+ * 手动启动一次独立桌面窗口（不随 DSH 自动启动）。
  *
  *   npx dsh-live2d-desktop
  *
- * 需要本机有 Electron。没有的话先装：
- *   npm i -g electron@33
+ * Electron 运行时会自动准备（缓存于 ~/.dsh/live2d/electron/v<版本>，只需一次）。
  */
 import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureElectronBinary } from '../src/electron-binary.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const main = path.join(here, '..', 'desktop', 'main.mjs');
-const require = createRequire(path.join(here, '..', 'package.json'));
+const pluginRoot = path.resolve(here, '..');
+const main = path.join(pluginRoot, 'desktop', 'main.mjs');
+const log = message => console.log(message);
 
 let electron;
 try {
-  electron = require('electron');
-} catch {
-  console.error('没有找到 Electron。请先安装：npm i -g electron@33，然后重新运行 npx dsh-live2d-desktop');
+  ({ electron } = await ensureElectronBinary({ log }));
+} catch (error) {
+  console.error(`Electron 准备失败：${error?.message || error}`);
+  console.error('国内网络可以设 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/" 后重试。');
   process.exit(1);
 }
 
-const child = spawn(electron, [main], { stdio: 'inherit', env: process.env });
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+const child = spawn(electron, [main], { stdio: 'inherit', cwd: pluginRoot, env });
 child.on('exit', code => process.exit(code ?? 0));
