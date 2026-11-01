@@ -8,6 +8,7 @@ import { hostExitDecision } from './runtime/host-exit.mjs';
 import { clickMotionGroups, clickMotionWait, idleVarietyGroups } from './runtime/click-motion.mjs';
 import { breathValue } from './runtime/breathing.mjs';
 import { createGaze } from './runtime/gaze.mjs';
+import { createLookFollower, lookParameters, lookTarget } from './runtime/look.mjs';
 import { createFidget } from './runtime/fidget.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
@@ -67,6 +68,15 @@ import { createFidget } from './runtime/fidget.mjs';
       }catch{/* 模型没这个参数 */ }
       return out;
     };
+    window.__dshGroups=()=>{
+      try{
+        const groups=model.internalModel.motionManager.groups||{};
+        return {groups:Object.keys(groups), current:model.internalModel.motionManager.state?.currentGroup||null};
+      }catch(error){return {error:String(error)};}
+    };
+    window.__dshPlayMotion=async group=>{
+      try{return await model.motion(group,0,3);}catch(error){return 'ERR '+error.message;}
+    };
     const setZoom=n=>{zoom=Math.min(3,Math.max(.25,n));layout();scheduleSave();};
     const scaleDesktop=factor=>{if(desktopApi)desktopApi.scaleBy(factor);else setZoom(zoom*factor);};
     let wardrobe=defaultWardrobe(),motionLocked=false,gestureLock=false,gestureSerial=0;
@@ -113,7 +123,7 @@ import { createFidget } from './runtime/fidget.mjs';
     }
     if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
     paintPressed();
-    let drag, windowDrag=false, lookUntil=0, lean=0, leanTarget=0;
+    let drag, windowDrag=false, lean=0, leanTarget=0;
     if(model.internalModel.renderer?.setClippingMaskBufferSize) model.internalModel.renderer.setClippingMaskBufferSize(2048);
     for(const texture of model.textures){
       texture.baseTexture.scaleMode=PIXI.SCALE_MODES.LINEAR;
@@ -163,7 +173,7 @@ import { createFidget } from './runtime/fidget.mjs';
       cleanups.push(()=>clearInterval(hitTimer));
       const gestures=createGestureRecognizer({slop:5,holdMs:180,doubleMs:260});
       const bubble=document.getElementById('bubble'),panel=document.getElementById('panel');
-      let clickTimer=0,bubbleTimer=0,lastReaction=0,nod=null,glanceAt=performance.now()+2500,lastPointerX=0,pinned=true;
+      let clickTimer=0,bubbleTimer=0,lastReaction=0,nod=null,lastPointerX=0,pinned=true;
       const hoveredUi=target=>!!(target&&target.closest&&target.closest('#panel,#balance,button'));
       const regionAt=y=>{const rect=document.getElementById('pet').getBoundingClientRect();return (y-rect.top)/Math.max(1,rect.height)<.42?'head':'body';};
       const say=text=>{bubble.textContent=text;bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{bubble.hidden=true;},1100);};
@@ -173,7 +183,7 @@ import { createFidget } from './runtime/fidget.mjs';
         lastReaction=now;
         if(kind==='head'){nod={start:now,duration:420,amp:-12};say(['嗯？','在的','嘿嘿'][Math.floor(Math.random()*3)]);}
         else if(kind==='double'){nod={start:now,duration:520,amp:-16};say('嘿嘿！');}
-        else {model.focus(point.x,point.y);lookUntil=now+1400;}
+        else {const rect=document.getElementById('pet').getBoundingClientRect();look.setTarget(lookTarget(point.x,point.y,rect),now);}
         const groups=clickMotionGroups(kind,{mode:appliedMode,locked:motionLocked});
         if(groups)void playClickMotions(groups);
       };
@@ -199,6 +209,9 @@ import { createFidget } from './runtime/fidget.mjs';
           clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart();return;
         }
         desktopApi.setIgnore(!(hoveredUi(e.target)||hitAt(e.clientX,e.clientY)));
+        // 鼠标跟随：记录目标，由 lookFollower 平滑逼近（死区 + 比例，不再"一动就满偏"）
+        const rect=document.getElementById('pet').getBoundingClientRect();
+        look.setTarget(lookTarget(e.clientX,e.clientY,rect),performance.now());
       });
       on(window,'mouseup',e=>{
         if(windowDrag){windowDrag=false;leanTarget=0;gestures.pointerUp(e.clientX,e.clientY,performance.now());desktopApi.dragEnd();return;}
@@ -237,12 +250,7 @@ import { createFidget } from './runtime/fidget.mjs';
         }
       });
       window.__life=now=>{
-        if(lookUntil&&now>lookUntil){lookUntil=0;const rect=document.getElementById('pet').getBoundingClientRect();model.focus(rect.left+rect.width/2,rect.top+rect.height/2,true);}
-        if(appliedMode==='idle'&&!windowDrag&&!lookUntil&&now>glanceAt){
-          const rect=document.getElementById('pet').getBoundingClientRect();
-          model.focus(rect.left+rect.width*(.35+Math.random()*.3),rect.top+rect.height*(.2+Math.random()*.2));
-          glanceAt=now+2800+Math.random()*4200;lookUntil=now+900;
-        }
+        // 鼠标跟随完全由 lookFollower 驱动，不再用内置 model.focus（那套是"方向满偏"）
         const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag;
         if(busy)window.__idleStill=now;
         else if(!window.__idleStill)window.__idleStill=now;
@@ -340,8 +348,17 @@ import { createFidget } from './runtime/fidget.mjs';
       if(appliedMode==='idle'||appliedMode==='thinking'){
         try{coreModel.setParameterValueById('ParamBreath',breathValue(now/1000));}catch{/* 模型没这个参数 */ }
       }
+      // 鼠标跟随：平滑的比例跟随，替代内置 focus 的"方向满偏 + 快速甩回"
+      if((appliedMode==='idle'||appliedMode==='thinking')&&!gestureLock&&!motionLocked){
+        const params=lookParameters(look.update(now));
+        try{
+          for(const [id,value] of Object.entries(params))coreModel.addParameterValueById(id,value);
+        }catch{/* 参数不存在 */ }
+      }else{
+        look.update(now);
+      }
       // 视线漂移：只在她没在表演时加，免得和动作抢眼珠
-      if(appliedMode==='idle'&&!gestureLock&&!motionLocked){
+      if(appliedMode==='idle'&&!gestureLock&&!motionLocked&&!look.active){
         const g=gaze.valueAt(now/1000);
         try{
           coreModel.addParameterValueById('ParamEyeBallX',g.x);
@@ -376,6 +393,7 @@ import { createFidget } from './runtime/fidget.mjs';
     if(!report.idle)throw new Error('缺少 Idle 动作');
     let fidget=null;
     const gaze=createGaze();
+    const look=createLookFollower();
     fetch('model/'+encodeURI('Animation/脱捕.motion3.json')).then(response=>response.ok?response.json():null).then(json=>{if(json)fidget=createFidget(json,0.14);}).catch(()=>{});
     activate('idle');
     eventSource=new EventSource('events');
@@ -413,7 +431,7 @@ import { createFidget } from './runtime/fidget.mjs';
     function tick(now){
       if(disposed)return;const dt=Math.min(50,now-then);then=now;
       window.__life?.(now);
-      const active=!paused&&(appliedMode!=='idle'||windowDrag||lookUntil>now);
+      const active=!paused&&(appliedMode!=='idle'||windowDrag||look.active);
       const decision=pace.consume(dt,active);
       if(decision.draw&&!paused&&!document.hidden&&!externallyHidden){model.update(decision.step);app.renderer.render(app.stage);frames++;pace.present(now);}
       if(now-lastPaceUi>1000){

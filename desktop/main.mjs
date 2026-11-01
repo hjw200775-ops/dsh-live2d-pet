@@ -321,20 +321,30 @@ app.whenReady().then(async () => {
       if (process.env.DSH_DESKTOP_CHECK === '1') {
         await waitForBridge();
         const forcedMode = process.env.DSH_DESKTOP_CHECK_MODE;
-        if (forcedMode) {
-          desktopLink?.ingest?.({ mode: forcedMode, activeCount: 1 });
-          log('FORCED_MODE ' + forcedMode);
+        const forcedMotion = process.env.DSH_DESKTOP_CHECK_MOTION;
+        if (forcedMotion) {
+          const started = await windowRef.webContents.executeJavaScript(
+            `(async()=>{try{const ok=await window.__dshPlayMotion?.(${JSON.stringify(forcedMotion)});return String(ok);}catch(e){return 'ERR '+e.message;}})()`,
+          ).catch(error => 'ERR ' + error.message);
+          log('FORCED_MOTION ' + forcedMotion + ' -> ' + started);
         }
         const waitMs = Number(process.env.DSH_DESKTOP_CHECK_WAIT_MS || 0);
-        if (waitMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, waitMs));
-          log(`WAIT_PARAMS_AFTER ${waitMs}ms`);
-        }
         const ids = ['AngleX', 'AngleY', 'AngleZ', 'PositionX', 'PositionY', 'ParamAngleZ'];
-        report.params = await windowRef.webContents
+        const readParams = async () => windowRef.webContents
           .executeJavaScript(`window.__dshParams ? window.__dshParams(${JSON.stringify(ids)}) : null`)
           .catch(error => ({ error: String(error) }));
-        log('PARAMS ' + JSON.stringify(report.params));
+        // 链路有 3 秒的 stale 超时：要持续喂状态，否则会被打回 idle
+        const series = [];
+        for (let elapsed = 0; elapsed < Math.max(waitMs, 1000); elapsed += 500) {
+          if (forcedMode) desktopLink?.ingest?.({ mode: forcedMode, activeCount: 1 });
+          if (elapsed % 1000 === 0) series.push({ t: elapsed, ...(await readParams()) });
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        if (forcedMode) log('FORCED_MODE ' + forcedMode);
+        report.groups = await windowRef.webContents.executeJavaScript('window.__dshGroups ? window.__dshGroups() : null').catch(() => null);
+        log('GROUPS ' + JSON.stringify(report.groups));
+        log('PARAMS_SERIES ' + JSON.stringify(series));
+        report.params = series[series.length - 1];
         const hits = await windowRef.webContents.executeJavaScript('window.__dshHit ? { corner: window.__dshHit(6, 6), face: window.__dshHit(Math.round(innerWidth/2), Math.round(innerHeight*0.42)) } : null');
         report.hits = hits;
         const image = await windowRef.capturePage();

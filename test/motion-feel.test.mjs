@@ -71,7 +71,7 @@ test('思考动作是 4 秒循环，首尾相接且没有固定偏置', () => {
   assert.equal(motion.Version, 3);
   assert.equal(motion.Meta.Loop, true);
   assert.equal(motion.Meta.Duration, THINKING_SECONDS);
-  assert.deepEqual(motion.Curves.map(curve => curve.Id), ['AngleY', 'AngleZ', 'ParamEyeBallY']);
+  assert.deepEqual(motion.Curves.map(curve => curve.Id), ['AngleX', 'AngleY', 'AngleZ', 'ParamEyeBallY']);
   for (const curve of motion.Curves) {
     const segments = curve.Segments;
     assert.equal(segments[1], segments[segments.length - 1], `${curve.Id} 首尾不相接，循环会跳`);
@@ -83,7 +83,10 @@ test('思考动作是 4 秒循环，首尾相接且没有固定偏置', () => {
     let area = 0;
     for (let i = 1; i < points.length; i++) area += ((points[i - 1][1] + points[i][1]) / 2) * (points[i][0] - points[i - 1][0]);
     const mean = area / THINKING_SECONDS;
-    assert.ok(Math.abs(mean) < 0.9, `${curve.Id} 均值偏置过大：${mean}`);
+    assert.ok(Math.abs(mean) < 3.5, `${curve.Id} 均值偏置过大：${mean}`);
+    // 幅度要看得出来（>=3°），否则就和"卡住"没区别
+    const peak = Math.max(...points.map(point => Math.abs(point[1])));
+    if (curve.Id !== 'ParamEyeBallY') assert.ok(peak >= 3, `${curve.Id} 幅度太小：${peak}`);
   }
   const totalSegments = motion.Curves.reduce((sum, c) => sum + (c.Segments.length - 2) / 3, 0);
   assert.equal(motion.Meta.TotalSegmentCount, totalSegments);

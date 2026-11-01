@@ -45,11 +45,13 @@ export function flinchMotion() {
 export const THINKING_SECONDS = 4;
 
 export function thinkingLoopMotion() {
+  // 幅度参考模型自己的动作（脱捕 AngleZ 能到 23°）：太小就看着像卡住了。
+  // 这里控制在 4~7°，既能看出在动，又不会显得抽搐；首尾落回同一点，循环不跳。
   return motionDocument([
-    // 围绕 0 对称摆动：正负抵消，思考时不会一直往一边歪
-    linearCurve('AngleY', [[0, 1.4], [1.2, -3.2], [2.6, -1.1], [3.4, 1.2], [4, 1.4]]),
-    linearCurve('AngleZ', [[0, -1.3], [1.6, 2.6], [3, 1.2], [4, -1.3]]),
-    linearCurve('ParamEyeBallY', [[0, 0.14], [1.4, 0.28], [2.8, 0.1], [4, 0.14]]),
+    linearCurve('AngleX', [[0, 0], [1.2, -4], [2.6, 3], [4, 0]]),
+    linearCurve('AngleY', [[0, -2], [1.2, -7], [2.6, -3], [4, -2]]),
+    linearCurve('AngleZ', [[0, 0], [1, 3], [2.2, -2], [3.4, 2], [4, 0]]),
+    linearCurve('ParamEyeBallY', [[0, 0.1], [1.4, 0.3], [2.8, 0.15], [4, 0.1]]),
   ], THINKING_SECONDS, { loop: true });
 }
 
