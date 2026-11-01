@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-live2d",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "DSH 桌宠：装完重开 DSH 就自动出现独立透明桌面窗口。模型首次启动自动下载；Live2D Cubism Core 因授权限制需自行获取。",
   "type": "module",
   "main": "src/index.js",

@@ -22,29 +22,72 @@ function motionDocument(curves, duration, { loop = false } = {}) {
   };
 }
 
+/**
+ * 头部和身体用的是模型自带的「控制器」参数（AngleX/AngleY/AngleZ、PositionX/Y），
+ * 模型自己的 IDLE 和竖指动作也是驱动这几个，数值范围取自这些动作的实测区间：
+ *   AngleX -17.6…14.3 / AngleY -23.6…5.8 / AngleZ 0…23.4 / PositionX -17.6…14.3 / PositionY -6.7…5.7
+ * 手臂是「姿态开关」（狗尾草 / 抚胸 / 竖食指），不是连续角度，所以动作里不碰手臂。
+ */
+export const SAFE_PARAMS = new Set(['AngleX', 'AngleY', 'AngleZ', 'PositionX', 'PositionY', 'PositionZ', 'ParamEyeBallX', 'ParamEyeBallY', 'ParamEyeLOpen', 'ParamEyeROpen', 'ParamMouthOpenY', 'ParamMouthForm']);
+export const HEAD_LIMIT = { x: 14, y: 20, z: 20 };
+
 /** One small tilt and return, used when an error begins. */
 export function flinchMotion() {
   return motionDocument([
-    linearCurve('ParamAngleZ', [[0, 0], [0.22, -7], [0.9, 0]]),
+    linearCurve('AngleZ', [[0, 0], [0.22, 7], [0.9, 0]]),
   ], 0.9);
 }
 
 /**
  * 思考时的循环动作：缓慢点头 + 轻微歪头 + 眼珠上飘。
- *
- * 以前是运行时用一条 2.6 秒正弦驱动，节奏精确到能看出来是算法；
- * 改成动作后由动作系统做淡入淡出，和其他动作混在一起更自然。
  * 首尾都回到 0，循环不会跳。
  */
 export const THINKING_SECONDS = 4;
 
 export function thinkingLoopMotion() {
   return motionDocument([
-    linearCurve('ParamAngleY', [[0, 0], [1.2, 3.2], [2.6, 1.1], [4, 0]]),
-    linearCurve('ParamAngleZ', [[0, 0], [1.6, -2.4], [3, 2.1], [4, 0]]),
+    linearCurve('AngleY', [[0, 0], [1.2, -3.2], [2.6, -1.1], [4, 0]]),
+    linearCurve('AngleZ', [[0, 0], [1.6, 2.6], [3, 1.2], [4, 0]]),
     linearCurve('ParamEyeBallY', [[0, 0], [1.4, 0.28], [2.8, 0.1], [4, 0]]),
-    linearCurve('ParamBodyAngleZ', [[0, 0], [2, -1.1], [4, 0]]),
   ], THINKING_SECONDS, { loop: true });
+}
+
+/** 打招呼：轻轻点头 + 抬一点身子 + 微微前倾，像在跟你示意。 */
+export const HELLO_SECONDS = 2.2;
+export function helloMotion() {
+  return motionDocument([
+    linearCurve('PositionY', [[0, 0], [0.5, 3.2], [1.4, 3.2], [2.2, 0]]),
+    linearCurve('AngleY', [[0, 0], [0.45, -5], [1.2, -2], [2.2, 0]]),
+    linearCurve('AngleZ', [[0, 0], [0.6, 4], [1.5, 1.5], [2.2, 0]]),
+    linearCurve('ParamEyeLOpen', [[0, 1], [0.9, 1], [1.0, 0.2], [1.1, 1], [2.2, 1]]),
+    linearCurve('ParamEyeROpen', [[0, 1], [0.9, 1], [1.0, 0.2], [1.1, 1], [2.2, 1]]),
+  ], HELLO_SECONDS);
+}
+
+/** 点头：两次短促的下点，第二次轻一点。 */
+export const NOD_SECONDS = 1.6;
+export function nodMotion() {
+  return motionDocument([
+    linearCurve('AngleY', [[0, 0], [0.3, -6.5], [0.62, 0.8], [0.95, -5], [1.6, 0]]),
+  ], NOD_SECONDS);
+}
+
+/** 摇头：左右各一次，幅度收到 8 以内，避免脖子穿帮。 */
+export const SHAKE_SECONDS = 1.8;
+export function shakeMotion() {
+  return motionDocument([
+    linearCurve('AngleX', [[0, 0], [0.32, -8], [0.85, 8], [1.35, -5], [1.8, 0]]),
+  ], SHAKE_SECONDS);
+}
+
+/** 伸懒腰：身子慢慢拔高再落下，配一个轻微的歪头。 */
+export const STRETCH_SECONDS = 3.2;
+export function stretchMotion() {
+  return motionDocument([
+    linearCurve('PositionY', [[0, 0], [1.1, 5], [2.1, 5.4], [3.2, 0]]),
+    linearCurve('AngleZ', [[0, 0], [1.2, 6.5], [2.2, 4], [3.2, 0]]),
+    linearCurve('AngleY', [[0, 0], [1.3, -4.5], [2.4, -2], [3.2, 0]]),
+  ], STRETCH_SECONDS);
 }
 
 /** 旧接口保留：有些地方还在用这个正弦（例如自动动作前的过渡）。 */
@@ -58,6 +101,10 @@ export function thinkingPose(elapsed) {
 const DOCUMENTS = {
   'flinch.motion3.json': flinchMotion,
   'thinking.motion3.json': thinkingLoopMotion,
+  'hello.motion3.json': helloMotion,
+  'nod.motion3.json': nodMotion,
+  'shake.motion3.json': shakeMotion,
+  'stretch.motion3.json': stretchMotion,
 };
 
 export function authoredMotion(name) {
@@ -68,4 +115,8 @@ export function authoredMotion(name) {
 export const AUTHORED_MOTIONS = {
   Flinch: { file: 'generated/flinch.motion3.json', seconds: 0.9 },
   Thinking: { file: 'generated/thinking.motion3.json', seconds: THINKING_SECONDS, loop: true },
+  Hello: { file: 'generated/hello.motion3.json', seconds: HELLO_SECONDS },
+  Nod: { file: 'generated/nod.motion3.json', seconds: NOD_SECONDS },
+  Shake: { file: 'generated/shake.motion3.json', seconds: SHAKE_SECONDS },
+  Stretch: { file: 'generated/stretch.motion3.json', seconds: STRETCH_SECONDS },
 };

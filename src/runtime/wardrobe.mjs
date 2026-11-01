@@ -56,6 +56,10 @@ export const FACE_CONTROLS = [
 ];
 
 export const MOTION_CONTROLS = [
+  ['Hello', '打招呼'],
+  ['Nod', '点头'],
+  ['Shake', '摇头'],
+  ['Stretch', '伸懒腰'],
   ['FingerOut', '竖指出来'],
   ['FingerBack', '竖指收回'],
   ['GrassOut', '狗尾草出来'],
