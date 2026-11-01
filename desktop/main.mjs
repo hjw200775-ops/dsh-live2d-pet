@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog, shell, clipboard } from 'electron';
 import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -201,6 +201,13 @@ function buildTray() {
       if (!windowRef.isDestroyed()) windowRef.webContents.send('desktop:quit-with-host', quitWithHost);
     } },
     { type: 'separator' },
+    { label: '复制姿态参数', click: () => {
+      // 出问题时让用户一键复制当前头部/身体参数，比"她歪着头"好定位得多
+      const ids = ['AngleX', 'AngleY', 'AngleZ', 'ParamAngleX', 'ParamAngleY', 'ParamAngleZ', 'PositionX', 'PositionY', 'PositionZ'];
+      void windowRef.webContents.executeJavaScript(`window.__dshParams ? JSON.stringify(window.__dshParams(${JSON.stringify(ids)})) : 'null'`)
+        .then(text => clipboard.writeText(text))
+        .catch(() => {});
+    } },
     { label: '打开日志目录', click: () => { void shell.openPath(logDir); } },
     { label: '退出', click: () => app.quit() },
   ]);
@@ -313,6 +320,21 @@ app.whenReady().then(async () => {
       };
       if (process.env.DSH_DESKTOP_CHECK === '1') {
         await waitForBridge();
+        const forcedMode = process.env.DSH_DESKTOP_CHECK_MODE;
+        if (forcedMode) {
+          desktopLink?.ingest?.({ mode: forcedMode, activeCount: 1 });
+          log('FORCED_MODE ' + forcedMode);
+        }
+        const waitMs = Number(process.env.DSH_DESKTOP_CHECK_WAIT_MS || 0);
+        if (waitMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+          log(`WAIT_PARAMS_AFTER ${waitMs}ms`);
+        }
+        const ids = ['AngleX', 'AngleY', 'AngleZ', 'PositionX', 'PositionY', 'ParamAngleZ'];
+        report.params = await windowRef.webContents
+          .executeJavaScript(`window.__dshParams ? window.__dshParams(${JSON.stringify(ids)}) : null`)
+          .catch(error => ({ error: String(error) }));
+        log('PARAMS ' + JSON.stringify(report.params));
         const hits = await windowRef.webContents.executeJavaScript('window.__dshHit ? { corner: window.__dshHit(6, 6), face: window.__dshHit(Math.round(innerWidth/2), Math.round(innerHeight*0.42)) } : null');
         report.hits = hits;
         const image = await windowRef.capturePage();

@@ -46,9 +46,10 @@ export const THINKING_SECONDS = 4;
 
 export function thinkingLoopMotion() {
   return motionDocument([
-    linearCurve('AngleY', [[0, 0], [1.2, -3.2], [2.6, -1.1], [4, 0]]),
-    linearCurve('AngleZ', [[0, 0], [1.6, 2.6], [3, 1.2], [4, 0]]),
-    linearCurve('ParamEyeBallY', [[0, 0], [1.4, 0.28], [2.8, 0.1], [4, 0]]),
+    // 围绕 0 对称摆动：正负抵消，思考时不会一直往一边歪
+    linearCurve('AngleY', [[0, 1.4], [1.2, -3.2], [2.6, -1.1], [3.4, 1.2], [4, 1.4]]),
+    linearCurve('AngleZ', [[0, -1.3], [1.6, 2.6], [3, 1.2], [4, -1.3]]),
+    linearCurve('ParamEyeBallY', [[0, 0.14], [1.4, 0.28], [2.8, 0.1], [4, 0.14]]),
   ], THINKING_SECONDS, { loop: true });
 }
 

@@ -40,19 +40,49 @@ function valueOn(samples, time) {
   return previous[1];
 }
 
-/** A quiet loop of the escape clip's body path. Face, hands, and props stay out. */
+/**
+ * 按时间加权求曲线的平均值（时间轴上的重心），用来去掉直线的静态偏置。
+ */
+function timeMean(samples, duration) {
+  if (!duration || samples.length < 2) return 0;
+  let area = 0;
+  for (let index = 1; index < samples.length; index++) {
+    const [t0, v0] = samples[index - 1];
+    const [t1, v1] = samples[index];
+    const span = Math.max(0, t1 - t0);
+    area += ((v0 + v1) / 2) * span;
+  }
+  return area / duration;
+}
+
+/**
+ * 待机时的轻微身体晃动：从「脱捕」剪切里抽出身体轨迹，缩小幅度后**叠加**到模型自身的动作上。
+ *
+ * 注意：原曲线不是围绕 0 摆动的（脱捕 AngleZ 均值约 +11.6），直接叠加会给她一个
+ * 永久的偏头角度。所以每条曲线先减掉时间均值，只留摇摆成分。
+ */
 export function createFidget(motion, scale = 0.2) {
   const duration = motion?.Meta?.Duration || 0;
   const curves = (motion?.Curves || [])
     .filter(curve => BODY.includes(curve.Id))
-    .map(curve => ({ id: curve.Id, samples: curveSamples(curve.Segments) }));
+    .map(curve => {
+      const samples = curveSamples(curve.Segments);
+      return { id: curve.Id, samples, offset: timeMean(samples, duration) };
+    });
   return {
     duration,
+    offsetFor(id) {
+      const curve = curves.find(item => item.id === id);
+      return curve ? curve.offset * scale : 0;
+    },
     valueAt(time) {
       if (!duration || !curves.length) return {};
       const local = ((time % duration) + duration) % duration;
       const values = {};
-      for (const curve of curves) values[curve.id] = scale * valueOn(curve.samples, local);
+      for (const curve of curves) {
+        // 减掉均值：叠加层不再带静态偏置，只有晃动
+        values[curve.id] = scale * (valueOn(curve.samples, local) - curve.offset);
+      }
       return values;
     },
   };

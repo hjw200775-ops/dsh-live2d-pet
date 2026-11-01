@@ -66,7 +66,7 @@ test('淡入淡出按组区分：待机慢、出错快', () => {
   assert.deepEqual(fadeFor('不存在的组'), { in: 0.25, out: 0.25 });
 });
 
-test('思考动作是 4 秒循环，首尾归零', () => {
+test('思考动作是 4 秒循环，首尾相接且没有固定偏置', () => {
   const motion = thinkingLoopMotion();
   assert.equal(motion.Version, 3);
   assert.equal(motion.Meta.Loop, true);
@@ -74,9 +74,16 @@ test('思考动作是 4 秒循环，首尾归零', () => {
   assert.deepEqual(motion.Curves.map(curve => curve.Id), ['AngleY', 'AngleZ', 'ParamEyeBallY']);
   for (const curve of motion.Curves) {
     const segments = curve.Segments;
-    assert.equal(segments[1], 0, `${curve.Id} 起始不为 0`);
-    assert.equal(segments[segments.length - 1], 0, `${curve.Id} 结束不为 0`);
+    assert.equal(segments[1], segments[segments.length - 1], `${curve.Id} 首尾不相接，循环会跳`);
     assert.equal(segments[segments.length - 2], THINKING_SECONDS, `${curve.Id} 结束时间不对`);
+    // 时间加权均值要接近 0，否则思考时会一直往一边歪
+    const points = [];
+    let index = 2;
+    while (index < segments.length) { points.push([segments[index + 1], segments[index + 2]]); index += 3; }
+    let area = 0;
+    for (let i = 1; i < points.length; i++) area += ((points[i - 1][1] + points[i][1]) / 2) * (points[i][0] - points[i - 1][0]);
+    const mean = area / THINKING_SECONDS;
+    assert.ok(Math.abs(mean) < 0.9, `${curve.Id} 均值偏置过大：${mean}`);
   }
   const totalSegments = motion.Curves.reduce((sum, c) => sum + (c.Segments.length - 2) / 3, 0);
   assert.equal(motion.Meta.TotalSegmentCount, totalSegments);

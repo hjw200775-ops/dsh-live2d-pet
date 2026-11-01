@@ -58,6 +58,15 @@ import { createFidget } from './runtime/fidget.mjs';
       model.scale.set(Math.min(b.width/nativeW,b.height/nativeH)*.92*shownZoom);model.position.set(b.width/2+shownX,b.height/2+shownY);
     };
     observer=new ResizeObserver(layout);observer.observe(document.getElementById('pet'));layout();
+    // 只读调试钩子：排查"长期偏头"这类问题时能直接读参数值，不影响渲染
+    window.__dshParams=ids=>{
+      const out={};
+      try{
+        const core=model.internalModel.coreModel;
+        for(const id of ids||[])out[id]=core.getParameterValueById(id);
+      }catch{/* 模型没这个参数 */ }
+      return out;
+    };
     const setZoom=n=>{zoom=Math.min(3,Math.max(.25,n));layout();scheduleSave();};
     const scaleDesktop=factor=>{if(desktopApi)desktopApi.scaleBy(factor);else setZoom(zoom*factor);};
     let wardrobe=defaultWardrobe(),motionLocked=false,gestureLock=false,gestureSerial=0;
