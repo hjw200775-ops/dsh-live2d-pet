@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, realpath, mkdir, writeFile, rename, rm } from 'node:fs/promises';
+import { readFile, realpath, mkdir, writeFile, rename, rm, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -43,16 +43,14 @@ export async function startViewer(config) {
       : e.message;
   }
   const staticFiles = new Map(['index.html', 'viewer.js', 'style.css', 'cubism-color.js'].map(n => [n, path.join(renderer, n)]));
-  staticFiles.set('runtime/motion-policy.mjs', fileURLToPath(new URL('./runtime/motion-policy.mjs', import.meta.url)));
-  staticFiles.set('runtime/model-hit.mjs', fileURLToPath(new URL('./runtime/model-hit.mjs', import.meta.url)));
-  staticFiles.set('runtime/gesture.mjs', fileURLToPath(new URL('./runtime/gesture.mjs', import.meta.url)));
+  // 运行时模块整目录放行：以前是逐个 set，加了新模块忘了登记就会让整个渲染器 import 失败
   staticFiles.set('runtime/balance.mjs', fileURLToPath(new URL('./balance.mjs', import.meta.url)));
-  staticFiles.set('runtime/wardrobe.mjs', fileURLToPath(new URL('./runtime/wardrobe.mjs', import.meta.url)));
-  staticFiles.set('runtime/frame-pace.mjs', fileURLToPath(new URL('./runtime/frame-pace.mjs', import.meta.url)));
-  staticFiles.set('runtime/host-exit.mjs', fileURLToPath(new URL('./runtime/host-exit.mjs', import.meta.url)));
-  staticFiles.set('runtime/click-motion.mjs', fileURLToPath(new URL('./runtime/click-motion.mjs', import.meta.url)));
-  staticFiles.set('runtime/authored-motions.mjs', fileURLToPath(new URL('./runtime/authored-motions.mjs', import.meta.url)));
-  staticFiles.set('runtime/fidget.mjs', fileURLToPath(new URL('./runtime/fidget.mjs', import.meta.url)));
+  {
+    const runtimeDir = fileURLToPath(new URL('./runtime/', import.meta.url));
+    for (const name of await readdir(runtimeDir)) {
+      if (name.endsWith('.mjs')) staticFiles.set(`runtime/${name}`, path.join(runtimeDir, name));
+    }
+  }
   staticFiles.set('core.js', config.coreFile);
   staticFiles.set('pixi.js', path.resolve(path.dirname(require.resolve('pixi.js')), '../browser/pixi.min.js'));
   staticFiles.set('live2d.js', path.join(path.dirname(require.resolve('pixi-live2d-display')), 'cubism4.min.js'));

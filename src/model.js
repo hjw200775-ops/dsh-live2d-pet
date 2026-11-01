@@ -1,6 +1,7 @@
 import { readFile, realpath, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { AUTHORED_MOTIONS } from './runtime/authored-motions.mjs';
+import { fadeFor } from './runtime/fades.mjs';
 
 export async function localFile(root, relative) {
   if (typeof relative !== 'string' || !relative || /[\\\x00?#:]/.test(relative) || relative.startsWith('/') || relative.split('/').some(p => p === '..' || p === '.')) {
@@ -32,19 +33,21 @@ export async function inspectModel(modelFile) {
   }
   if (!refs.Expressions) refs.Expressions = expressions.map(File => ({ Name: path.basename(File, '.exp3.json'), File }));
   const actions = {Answering:'默认手切举手',Return:'举手切默认手',FingerOut:'竖手指切出来动画',FingerBack:'竖手指切回默认',GrassOut:'狗尾草切换出来',GrassBack:'狗尾草切回默认手',Escape:'脱捕'};
-  const fades = { GrassOut: [0.3, 0.15], GrassBack: [0.2, 0.2] };
+  // 淡入淡出按动作组区分：回到平静要慢、注意力转移要快
   for(const [group,name] of Object.entries(actions)) {
     const File=motions.find(n=>path.basename(n)===`${name}.motion3.json`);
-    const [fadeIn, fadeOut] = fades[group] || [0.25, 0.25];
-    if(File) refs.Motions={...refs.Motions,[group]:[{File,FadeInTime:fadeIn,FadeOutTime:fadeOut}]};
+    const fade = fadeFor(group);
+    if(File) refs.Motions={...refs.Motions,[group]:[{File,FadeInTime:fade.in,FadeOutTime:fade.out}]};
   }
   for (const [group, motion] of Object.entries(AUTHORED_MOTIONS)) {
-    refs.Motions = { ...refs.Motions, [group]: [{ File: motion.file, FadeInTime: 0.2, FadeOutTime: 0.35 }] };
+    const fade = fadeFor(group);
+    refs.Motions = { ...refs.Motions, [group]: [{ File: motion.file, FadeInTime: fade.in, FadeOutTime: fade.out }] };
   }
   // [pet-gesture] 说话手势：模型里若有「举手保持强调」，优先用它做 Answering（抬手+强调+保持）
   {
     const talk = motions.find(n => path.basename(n) === '举手保持强调.motion3.json');
-    if (talk) refs.Motions = { ...refs.Motions, Answering: [{ File: talk, FadeInTime: 0.2, FadeOutTime: 0.3 }] };
+    const fade = fadeFor('Answering');
+    if (talk) refs.Motions = { ...refs.Motions, Answering: [{ File: talk, FadeInTime: fade.in, FadeOutTime: fade.out }] };
   }
   const allowed = new Map();
   const assets = [refs.Moc, ...refs.Textures, refs.Physics, refs.Pose, refs.DisplayInfo, refs.UserData,

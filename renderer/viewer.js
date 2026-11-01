@@ -6,7 +6,8 @@ import { OUTFIT_CONTROLS, FACE_CONTROLS, MOTION_CONTROLS, composeTargets, defaul
 import { createFramePace } from './runtime/frame-pace.mjs';
 import { hostExitDecision } from './runtime/host-exit.mjs';
 import { clickMotionGroups, clickMotionWait, idleVarietyGroups } from './runtime/click-motion.mjs';
-import { thinkingPose } from './runtime/authored-motions.mjs';
+import { breathValue } from './runtime/breathing.mjs';
+import { createGaze } from './runtime/gaze.mjs';
 import { createFidget } from './runtime/fidget.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
@@ -271,7 +272,7 @@ import { createFidget } from './runtime/fidget.mjs';
       chain=chain.catch(fail).then(async()=>{
         if(disposed||revision!==epoch)return;
         appliedMode=mode;
-        const group=mode==='answering'?'Answering':handRaised?'Return':'Idle';
+        const group=mode==='answering'?'Answering':mode==='thinking'?'Thinking':handRaised?'Return':'Idle';
         const intro=playIntro&&mode==='error'?'Flinch':null;
         if(!motionLocked&&!gestureLock){
           if(intro){
@@ -315,7 +316,10 @@ import { createFidget } from './runtime/fidget.mjs';
       const coreModel=model.internalModel.coreModel;
       applyWardrobe(coreModel);
       if(fidget&&appliedMode==='idle'&&!gestureLock&&!windowDrag&&!paused){
-        for(const [id,value] of Object.entries(fidget.valueAt(performance.now()/1000)))coreModel.setParameterValueById(id,value);
+        // 叠加而不是覆盖：以前 set 会把 IDLE 动作本身的身体曲线整个顶掉，切换时会抽一下
+        for(const [id,value] of Object.entries(fidget.valueAt(performance.now()/1000))){
+          try{coreModel.addParameterValueById(id,value);}catch{/* 参数不存在就跳过 */}
+        }
       }
     });
     model.internalModel.on('beforeModelUpdate',()=>{
@@ -323,13 +327,21 @@ import { createFidget } from './runtime/fidget.mjs';
       const coreModel=model.internalModel.coreModel;
       if(appliedMode==='answering')coreModel.setParameterValueById('ParamMouthOpenY',.18+.32*(1+Math.sin(now*.017)));
       applyWardrobe(coreModel);
+      // 呼吸层：IDLE 动作里没有 ParamBreath 曲线，这个参数本来就是留给运行时驱动的
+      if(appliedMode==='idle'||appliedMode==='thinking'){
+        try{coreModel.setParameterValueById('ParamBreath',breathValue(now/1000));}catch{/* 模型没这个参数 */ }
+      }
+      // 视线漂移：只在她没在表演时加，免得和动作抢眼珠
+      if(appliedMode==='idle'&&!gestureLock&&!motionLocked){
+        const g=gaze.valueAt(now/1000);
+        try{
+          coreModel.addParameterValueById('ParamEyeBallX',g.x);
+          coreModel.addParameterValueById('ParamEyeBallY',g.y);
+        }catch{/* 同上 */}
+      }
       if(appliedMode==='thinking'){
-        if(!window.__thinkAt)window.__thinkAt=now;
-        const pose=thinkingPose(now-window.__thinkAt);
         coreModel.setParameterValueById('key8',1);
         coreModel.setParameterValueById('Param140',(now%900)/900);
-        coreModel.addParameterValueById('ParamAngleY',pose.angleY);
-        coreModel.addParameterValueById('ParamEyeBallY',pose.eyeY);
       }else window.__thinkAt=0;
       if(window.__nodOffset)coreModel.addParameterValueById('ParamAngleY',window.__nodOffset(now));
       if(desktopApi){
@@ -354,7 +366,8 @@ import { createFidget } from './runtime/fidget.mjs';
     });
     if(!report.idle)throw new Error('缺少 Idle 动作');
     let fidget=null;
-    fetch('model/'+encodeURI('Animation/脱捕.motion3.json')).then(response=>response.ok?response.json():null).then(json=>{if(json)fidget=createFidget(json,0.35);}).catch(()=>{});
+    const gaze=createGaze();
+    fetch('model/'+encodeURI('Animation/脱捕.motion3.json')).then(response=>response.ok?response.json():null).then(json=>{if(json)fidget=createFidget(json,0.14);}).catch(()=>{});
     activate('idle');
     eventSource=new EventSource('events');
     let balanceNotice='';

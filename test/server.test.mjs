@@ -71,3 +71,20 @@ test('缺 Core 时的报错点名 Core 并给官方下载页', async t => {
   assert.match(status.error, /Cubism Core/);
   assert.match(status.error, /live2d\.com/);
 });
+
+test('渲染器 import 的每个 runtime 模块都必须能取到', async t => {
+  // 这条是为了防回归：新增运行时模块却忘了登记，整个 viewer 会 import 失败、桌宠直接不显示
+  const viewer = await startViewer({});
+  t.after(() => viewer.close());
+  const source = await readFile(new URL('../renderer/viewer.js', import.meta.url), 'utf8');
+  const names = [...source.matchAll(/from '\.\/runtime\/([a-z-]+\.mjs)'/g)].map(match => match[1]);
+  assert.ok(names.includes('breathing.mjs'), '应该能解析到 import 列表');
+  assert.ok(names.includes('gaze.mjs'));
+  const base = viewer.url.replace(/index\.html$/, '');
+  for (const name of names) {
+    const response = await fetch(base + 'runtime/' + name);
+    assert.equal(response.status, 200, `${name} 取不到（HTTP ${response.status}）`);
+    const body = await response.text();
+    assert.ok(body.length > 0, `${name} 是空的`);
+  }
+});
