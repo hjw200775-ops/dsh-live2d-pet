@@ -9,7 +9,8 @@ import { clickMotionGroups, clickMotionWait, idleVarietyGroups } from './runtime
 import { breathValue } from './runtime/breathing.mjs';
 import { createGaze } from './runtime/gaze.mjs';
 import { createLookFollower, lookParameters, lookTarget } from './runtime/look.mjs';
-import { createFidget } from './runtime/fidget.mjs';
+import { createIdleMotion } from './runtime/idle-motion.mjs';
+import { createBlink } from './runtime/blink.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
@@ -332,9 +333,10 @@ import { createFidget } from './runtime/fidget.mjs';
     model.internalModel.on('afterMotionUpdate',()=>{
       const coreModel=model.internalModel.coreModel;
       applyWardrobe(coreModel);
-      if(fidget&&appliedMode==='idle'&&!gestureLock&&!windowDrag&&!paused){
-        // 叠加而不是覆盖：以前 set 会把 IDLE 动作本身的身体曲线整个顶掉，切换时会抽一下
-        for(const [id,value] of Object.entries(fidget.valueAt(performance.now()/1000))){
+      {
+        // 噪声漂移与重心转移取代重复剪辑叠加；保留模型动作曲线。
+        const enabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
+        for(const [id,value] of Object.entries(idleMotion.valueAt(performance.now()/1000,enabled))){
           try{coreModel.addParameterValueById(id,value);}catch{/* 参数不存在就跳过 */}
         }
       }
@@ -346,7 +348,7 @@ import { createFidget } from './runtime/fidget.mjs';
       applyWardrobe(coreModel);
       // 呼吸层：IDLE 动作里没有 ParamBreath 曲线，这个参数本来就是留给运行时驱动的
       if(appliedMode==='idle'||appliedMode==='thinking'){
-        try{coreModel.setParameterValueById('ParamBreath',breathValue(now/1000));}catch{/* 模型没这个参数 */ }
+        try{coreModel.addParameterValueById('ParamBreath',breathValue(now/1000));}catch{/* 模型没这个参数 */ }
       }
       // 鼠标跟随：平滑的比例跟随，替代内置 focus 的"方向满偏 + 快速甩回"
       if((appliedMode==='idle'||appliedMode==='thinking')&&!gestureLock&&!motionLocked){
@@ -376,25 +378,18 @@ import { createFidget } from './runtime/fidget.mjs';
         if(!windowDrag)leanTarget=0;
         coreModel.addParameterValueById('ParamAngleZ',lean);
       }
-      const blinkOk=appliedMode!=='answering';
-      if(blinkOk&&!window.__blinking){
-        if(!window.__nextBlink)window.__nextBlink=now+1800;
-        if(now>=window.__nextBlink)window.__blinking={start:now};
-      }
-      if(!blinkOk)window.__blinking=null;
-      else if(window.__blinking){
-        const t=now-window.__blinking.start;
-        const open=t>160?1:t<70?1-Math.sin((t/70)*Math.PI/2):Math.sin(((t-70)/90)*Math.PI/2);
-        coreModel.setParameterValueById('ParamEyeLOpen',open);
-        coreModel.setParameterValueById('ParamEyeROpen',open);
-        if(t>160){window.__blinking=null;window.__nextBlink=now+2200+Math.random()*3800;}
+      const open=blink.valueAt(now/1000,appliedMode!=='answering'&&!paused);
+      if(open<1){
+        coreModel.multiplyParameterValueById('ParamEyeLOpen',open);
+        coreModel.multiplyParameterValueById('ParamEyeROpen',open);
       }
     });
     if(!report.idle)throw new Error('缺少 Idle 动作');
-    let fidget=null;
+    const seed=Math.floor(Math.random()*4294967296);
+    const idleMotion=createIdleMotion({seed});
+    const blink=createBlink({seed:seed+1});
     const gaze=createGaze();
     const look=createLookFollower();
-    fetch('model/'+encodeURI('Animation/脱捕.motion3.json')).then(response=>response.ok?response.json():null).then(json=>{if(json)fidget=createFidget(json,0.14);}).catch(()=>{});
     activate('idle');
     eventSource=new EventSource('events');
     let balanceNotice='';

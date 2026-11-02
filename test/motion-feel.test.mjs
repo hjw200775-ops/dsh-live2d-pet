@@ -13,8 +13,8 @@ test('呼吸值在区间内、首尾连续（不会跳）', () => {
     assert.ok(value >= low - 1e-9 && value <= high + 1e-9, `t=${t} 越界：${value}`);
   }
   // 一个周期后回到同一点，循环不会跳帧
-  const a = breathValue(0.3);
-  const b = breathValue(0.3 + BREATH_PERIOD);
+  const a = breathValue(0.3, { period: BREATH_PERIOD });
+  const b = breathValue(0.3 + BREATH_PERIOD, { period: BREATH_PERIOD });
   assert.ok(Math.abs(a - b) < 1e-6, `周期不闭合：${a} vs ${b}`);
 });
 
