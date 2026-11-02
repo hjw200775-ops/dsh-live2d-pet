@@ -7,6 +7,16 @@ import { movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src
 import { hitDrawableList } from '../src/runtime/model-hit.mjs';
 import { loadDesktopPreferences, placeBounds, sanitizeDesktopPreferences, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
 
+test('鼠标跟随开关与范围可保存重载，旧设置和损坏值回落默认', async t => {
+  const dir=await mkdtemp(path.join(os.tmpdir(),'dsh-follow-prefs-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'desktop-preferences.json');
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:false,radius:600}});
+  assert.deepEqual((await loadDesktopPreferences(file)).mouseFollow,{enabled:false,radius:600});
+  assert.deepEqual(sanitizeDesktopPreferences({}).mouseFollow,{enabled:true,radius:400});
+  assert.deepEqual(sanitizeDesktopPreferences({mouseFollow:{enabled:'false',radius:-1}}).mouseFollow,{enabled:true,radius:400});
+});
+
 test('desktop coordinates keep negatives and recover a missing display', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-desktop-prefs-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

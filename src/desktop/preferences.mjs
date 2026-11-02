@@ -1,17 +1,19 @@
 import { readFile, writeFile, rename, mkdir, copyFile } from 'node:fs/promises';
 import { normalizeWardrobe, defaultWardrobe } from '../runtime/wardrobe.mjs';
 import path from 'node:path';
+import { normalizeMouseFollow } from '../runtime/look.mjs';
 import { randomBytes } from 'node:crypto';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 
 export function defaultDesktopPreferences() {
-  return { schemaVersion: 1, bounds: null, displayId: null, alwaysOnTop: true, clickThrough: true, zoom: 1, model: { x: 0, y: 0 }, wardrobe: defaultWardrobe(), quitWithHost: false };
+  return { schemaVersion: 1, bounds: null, displayId: null, alwaysOnTop: true, clickThrough: true, zoom: 1, model: { x: 0, y: 0 }, wardrobe: defaultWardrobe(), mouseFollow: normalizeMouseFollow(), quitWithHost: false };
 }
 
 export function sanitizeDesktopPreferences(input, previous = defaultDesktopPreferences()) {
   const result = structuredClone(previous);
   if (!input || typeof input !== 'object') return result;
+  result.mouseFollow = normalizeMouseFollow(input.mouseFollow, result.mouseFollow || normalizeMouseFollow());
   if (input.alwaysOnTop === true || input.alwaysOnTop === false) result.alwaysOnTop = input.alwaysOnTop;
   if (input.clickThrough === true || input.clickThrough === false) result.clickThrough = input.clickThrough;
   if (input.quitWithHost === true || input.quitWithHost === false) result.quitWithHost = input.quitWithHost;

@@ -14,6 +14,15 @@
   <button data-act="smaller" type="button">缩小</button>
   <button data-act="reset" type="button">复位大小</button>
   <button id="pause" type="button">暂停</button>
+  <div id="follow-controls">
+    <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
+    <label for="follow-range">识别范围（以头部为中心）</label>
+    <select id="follow-range" aria-label="鼠标识别范围">
+      <option value="200">近 · 半径 200</option>
+      <option value="400" selected>中 · 半径 400</option>
+      <option value="600">远 · 半径 600</option>
+    </select>
+  </div>
   <button data-act="refresh" type="button">刷新余额</button>
   <button data-act="pin" type="button">取消置顶</button>
   <button data-act="quit" type="button">退出</button>

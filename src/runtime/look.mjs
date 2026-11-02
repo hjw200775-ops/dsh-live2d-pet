@@ -6,6 +6,20 @@
  * 这里改成：按距离成比例 + 死区 + 指数平滑 + 一段时间没动静就慢慢回正。
  */
 
+export const DEFAULT_MOUSE_FOLLOW = Object.freeze({ enabled: true, radius: 400 });
+
+export function normalizeMouseFollow(value, previous = DEFAULT_MOUSE_FOLLOW) {
+  return {
+    enabled: typeof value?.enabled === 'boolean' ? value.enabled : previous.enabled,
+    radius: [200, 400, 600].includes(value?.radius) ? value.radius : previous.radius,
+  };
+}
+
+export function inFollowRange(pointerX, pointerY, rect, settings = DEFAULT_MOUSE_FOLLOW) {
+  return settings.enabled && Number.isFinite(pointerX) && Number.isFinite(pointerY)
+    && Math.hypot(pointerX - rect.left - rect.width / 2, pointerY - rect.top - rect.height * 0.42) <= settings.radius;
+}
+
 export function lookTarget(pointerX, pointerY, rect, { deadZone = 0.1, max = 1 } = {}) {
   const centerX = rect.left + rect.width / 2;
   const centerY = rect.top + rect.height * 0.42; // 头的位置略高于画面中心

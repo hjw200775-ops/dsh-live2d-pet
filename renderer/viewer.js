@@ -8,9 +8,10 @@ import { hostExitDecision } from './runtime/host-exit.mjs';
 import { clickMotionGroups, clickMotionWait, idleVarietyGroups } from './runtime/click-motion.mjs';
 import { breathValue } from './runtime/breathing.mjs';
 import { createGaze } from './runtime/gaze.mjs';
-import { createLookFollower, lookParameters, lookTarget } from './runtime/look.mjs';
+import { createLookFollower, lookParameters, lookTarget, inFollowRange, normalizeMouseFollow } from './runtime/look.mjs';
 import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
+import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
@@ -54,6 +55,16 @@ import { createBlink } from './runtime/blink.mjs';
     app.stage.addChild(model);model.anchor.set(.5,.5);
     const nativeW=model.width,nativeH=model.height;
     const desktopApi=window.dshDesktop||null;
+    let mouseFollow=normalizeMouseFollow();
+    const notePointer=(pointerX,pointerY,now)=>{
+      const rect=document.getElementById('pet').getBoundingClientRect();
+      look.setTarget(inFollowRange(pointerX,pointerY,rect,mouseFollow)?lookTarget(pointerX,pointerY,rect):{x:0,y:0},now);
+    };
+    // 由本层提供可变周期呼吸，去掉 SDK 同一通道的固定正弦，避免相加后顶到上限。
+    const sdkBreath=model.internalModel.breath;
+    if(sdkBreath?.getParameters&&sdkBreath?.setParameters){
+      sdkBreath.setParameters(sdkBreath.getParameters().filter(parameter=>parameter.parameterId!=='ParamBreath'));
+    }
     const layout=()=>{
       const b=document.getElementById('pet').getBoundingClientRect();app.renderer.resize(Math.max(1,b.width),Math.max(1,b.height));
       const shownZoom=desktopApi?1:zoom,shownX=desktopApi?0:x,shownY=desktopApi?0:y;
@@ -184,7 +195,7 @@ import { createBlink } from './runtime/blink.mjs';
         lastReaction=now;
         if(kind==='head'){nod={start:now,duration:420,amp:-12};say(['嗯？','在的','嘿嘿'][Math.floor(Math.random()*3)]);}
         else if(kind==='double'){nod={start:now,duration:520,amp:-16};say('嘿嘿！');}
-        else {const rect=document.getElementById('pet').getBoundingClientRect();look.setTarget(lookTarget(point.x,point.y,rect),now);}
+        else notePointer(point.x,point.y,now);
         const groups=clickMotionGroups(kind,{mode:appliedMode,locked:motionLocked});
         if(groups)void playClickMotions(groups);
       };
@@ -211,8 +222,7 @@ import { createBlink } from './runtime/blink.mjs';
         }
         desktopApi.setIgnore(!(hoveredUi(e.target)||hitAt(e.clientX,e.clientY)));
         // 鼠标跟随：记录目标，由 lookFollower 平滑逼近（死区 + 比例，不再"一动就满偏"）
-        const rect=document.getElementById('pet').getBoundingClientRect();
-        look.setTarget(lookTarget(e.clientX,e.clientY,rect),performance.now());
+        notePointer(e.clientX,e.clientY,performance.now());
       });
       on(window,'mouseup',e=>{
         if(windowDrag){windowDrag=false;leanTarget=0;gestures.pointerUp(e.clientX,e.clientY,performance.now());desktopApi.dragEnd();return;}
@@ -330,34 +340,34 @@ import { createBlink } from './runtime/blink.mjs';
       }
     };
     // Physics reads LeanInput and the skirt parameter before the mesh updates, so the targets have to be in place first.
+    let frameLook={};
+    const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
+    attachNaturalOverlay(model.internalModel,()=>{
+      const now=performance.now();
+      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
+      const values=idleMotion.valueAt(now/1000,idleEnabled);
+      const point=look.update(now);
+      frameLook=followEnabled()?lookParameters(point):{};
+      // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
+      values.AngleX=(values.AngleX||0)+(frameLook.ParamAngleX||0);
+      values.AngleY=(values.AngleY||0)+(frameLook.ParamAngleY||0);
+      if(appliedMode==='idle'||appliedMode==='thinking')values.ParamBreath=breathValue(now/1000);
+      return values;
+    });
     model.internalModel.on('afterMotionUpdate',()=>{
       const coreModel=model.internalModel.coreModel;
       applyWardrobe(coreModel);
-      {
-        // 噪声漂移与重心转移取代重复剪辑叠加；保留模型动作曲线。
-        const enabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
-        for(const [id,value] of Object.entries(idleMotion.valueAt(performance.now()/1000,enabled))){
-          try{coreModel.addParameterValueById(id,value);}catch{/* 参数不存在就跳过 */}
-        }
-      }
     });
     model.internalModel.on('beforeModelUpdate',()=>{
       const now=performance.now();
       const coreModel=model.internalModel.coreModel;
       if(appliedMode==='answering')coreModel.setParameterValueById('ParamMouthOpenY',.18+.32*(1+Math.sin(now*.017)));
       applyWardrobe(coreModel);
-      // 呼吸层：IDLE 动作里没有 ParamBreath 曲线，这个参数本来就是留给运行时驱动的
-      if(appliedMode==='idle'||appliedMode==='thinking'){
-        try{coreModel.addParameterValueById('ParamBreath',breathValue(now/1000));}catch{/* 模型没这个参数 */ }
-      }
-      // 鼠标跟随：平滑的比例跟随，替代内置 focus 的"方向满偏 + 快速甩回"
-      if((appliedMode==='idle'||appliedMode==='thinking')&&!gestureLock&&!motionLocked){
-        const params=lookParameters(look.update(now));
-        try{
-          for(const [id,value] of Object.entries(params))coreModel.addParameterValueById(id,value);
-        }catch{/* 参数不存在 */ }
-      }else{
-        look.update(now);
+      // 空闲小动作不再禁用跟随；头部控制器已在物理之前叠加，这里只叠加眼珠。
+      if(followEnabled()){
+        for(const id of ['ParamEyeBallX','ParamEyeBallY']){
+          coreModel.addParameterValueById(id,frameLook[id]||0);
+        }
       }
       // 视线漂移：只在她没在表演时加，免得和动作抢眼珠
       if(appliedMode==='idle'&&!gestureLock&&!motionLocked&&!look.active){
@@ -390,6 +400,41 @@ import { createBlink } from './runtime/blink.mjs';
     const blink=createBlink({seed:seed+1});
     const gaze=createGaze();
     const look=createLookFollower();
+    const followButton=document.getElementById('mouse-follow'),followRange=document.getElementById('follow-range');
+    const paintFollow=()=>{
+      followButton.textContent=mouseFollow.enabled?'鼠标跟随：开':'鼠标跟随：关';
+      followButton.setAttribute('aria-pressed',String(mouseFollow.enabled));
+      followButton.classList.toggle('on',mouseFollow.enabled);
+      followRange.value=String(mouseFollow.radius);
+    };
+    const changeFollow=patch=>{
+      mouseFollow=normalizeMouseFollow(patch,mouseFollow);paintFollow();
+      // 关闭或缩小范围后先平滑回正，下一次有效移动再更新目标。
+      look.setTarget({x:0,y:0},performance.now());
+      desktopApi?.setMouseFollow?.(mouseFollow);
+    };
+    document.getElementById('follow-controls').hidden=!desktopApi;
+    paintFollow();
+    if(desktopApi?.getMouseFollow){
+      const savedFollow=await desktopApi.getMouseFollow();
+      mouseFollow=normalizeMouseFollow(savedFollow);paintFollow();
+    }
+    on(followButton,'click',()=>changeFollow({enabled:!mouseFollow.enabled}));
+    on(followRange,'change',()=>changeFollow({radius:Number(followRange.value)}));
+    if(desktopApi?.onPointer){
+      const unsubscribe=desktopApi.onPointer(point=>{
+        if(disposed||paused||windowDrag)return;
+        const now=performance.now();
+        if(point?.inside&&Number.isFinite(point.x)&&Number.isFinite(point.y)){
+          notePointer(point.x,point.y,now);
+          desktopApi.setIgnore(!(document.elementFromPoint(point.x,point.y)?.closest('#panel,#balance,button')||hitAt(point.x,point.y)));
+        }else if(point?.inside===false){
+          look.setTarget({x:0,y:0},now);
+          if(document.getElementById('panel').hidden)desktopApi.setIgnore(true);
+        }
+      });
+      if(typeof unsubscribe==='function')cleanups.push(unsubscribe);
+    }
     activate('idle');
     eventSource=new EventSource('events');
     let balanceNotice='';

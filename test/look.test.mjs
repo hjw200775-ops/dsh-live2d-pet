@@ -1,8 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LOOK_GAIN, createLookFollower, lookParameters, lookTarget } from '../src/runtime/look.mjs';
+import { normalizeMouseFollow, inFollowRange } from '../src/runtime/look.mjs';
 
 const rect = { left: 1000, top: 100, width: 400, height: 700 };
+
+test('识别范围以头部为中心，圆边界包含在内，开关和无效设置正确处理', () => {
+  assert.deepEqual(normalizeMouseFollow(),{enabled:true,radius:400});
+  assert.deepEqual(normalizeMouseFollow({enabled:false,radius:600}),{enabled:false,radius:600});
+  assert.deepEqual(normalizeMouseFollow({enabled:'true',radius:Infinity}),{enabled:true,radius:400});
+  assert.equal(inFollowRange(1600,394,rect),true);
+  assert.equal(inFollowRange(1601,394,rect),false);
+  assert.equal(inFollowRange(1200,394,rect,{enabled:false,radius:400}),false);
+  assert.equal(inFollowRange(NaN,394,rect),false);
+});
 
 test('指针在中心附近不动（死区）', () => {
   const centerX = rect.left + rect.width / 2;
