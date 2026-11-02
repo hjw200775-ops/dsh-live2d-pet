@@ -13,8 +13,11 @@ export function createRestSway({ seed = 47 } = {}) {
   reset();
   return {
     reset,
-    valueAt(time) {
+    valueAt(time, { blocked = false } = {}) {
       if (!Number.isFinite(time)) return { PositionX:0, PositionZ:0, AngleZ:0 };
+      // A short leg tremor has priority at its boundary. Move a pending body sway
+      // just past it instead of letting both layers peak together.
+      if (blocked && time >= start) start = time + 0.25;
       while (time >= start + duration) { start += duration + 35 + random() * 20; choose(); }
       if (time <= start) return { PositionX:0, PositionZ:0, AngleZ:0 };
       const t = (time - start) / duration;
