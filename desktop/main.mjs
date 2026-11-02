@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { startViewer } from '../src/viewer-server.js';
 import { createDesktopLink } from '../src/activity.js';
 import { createFileLogger } from '../src/log-file.mjs';
-import { movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
+import { dragCursorOrigin, movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { loadDesktopPreferences, placeBounds, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
 import { rendererRecovery, wakeWindow, acceptPetIpc } from '../src/desktop/session.mjs';
 import { createPointerTracker } from '../src/desktop/pointer.mjs';
@@ -106,10 +106,10 @@ ipcMain.on('desktop:set-ignore', (event, ignore) => {
   if (!fromPet(event) || dragging) return;
   windowRef.setIgnoreMouseEvents(!!ignore, { forward: true });
 });
-ipcMain.on('desktop:drag-start', event => {
+ipcMain.on('desktop:drag-start', (event, origin) => {
   if (!fromPet(event)) return;
-  const cursor = screen.getCursorScreenPoint();
   const bounds = windowRef.getBounds();
+  const cursor = dragCursorOrigin(bounds, origin, screen.getCursorScreenPoint());
   clearTimeout(zoomJob?.timer);
   zoomJob = null;
   dragging = { window: windowRef, cursor, bounds };

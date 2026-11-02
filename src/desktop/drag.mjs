@@ -1,3 +1,10 @@
+export function dragCursorOrigin(bounds, origin, current) {
+  if (Number.isFinite(origin?.x) && Number.isFinite(origin?.y) && origin.x >= 0 && origin.y >= 0 && origin.x <= bounds.width && origin.y <= bounds.height) {
+    return { x: bounds.x + origin.x, y: bounds.y + origin.y };
+  }
+  return current;
+}
+
 export function movedWindowBounds(start, from, to) {
   return {
     x: Math.round(start.x + to.x - from.x),

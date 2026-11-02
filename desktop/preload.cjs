@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     ipcRenderer.on('desktop:pointer', listener);
     return () => ipcRenderer.removeListener('desktop:pointer', listener);
   },
-  dragStart() { ipcRenderer.send('desktop:drag-start'); },
+  dragStart(origin) { ipcRenderer.send('desktop:drag-start', origin); },
   dragMove() { ipcRenderer.send('desktop:drag-move'); },
   dragEnd() { ipcRenderer.send('desktop:drag-end'); },
   scaleBy(factor) { ipcRenderer.send('desktop:scale-by', factor); },

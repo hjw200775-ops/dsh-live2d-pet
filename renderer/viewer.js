@@ -219,10 +219,10 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         }
         const decision=gestures.pointerMove(e.clientX,e.clientY);
         if(decision?.type==='drag-start'){
-          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart();return;
+          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
         }
         desktopApi.setIgnore(!(hoveredUi(e.target)||hitAt(e.clientX,e.clientY)));
-        // 鼠标跟随：记录目标，由 lookFollower 平滑逼近（死区 + 比例，不再"一动就满偏"）
+        // 鼠标跟随：记录软饱和目标，由眼球与头部的独立阻尼响应逼近。
         notePointer(e.clientX,e.clientY,performance.now());
       });
       on(window,'mouseup',e=>{
@@ -241,6 +241,12 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         e.preventDefault();
         panel.hidden=false;
         desktopApi.setIgnore(false);
+      });
+      // 透明点击穿透时也提供键盘入口，避免仅能通过鼠标打开设置。
+      on(window,'keydown',e=>{
+        if((e.shiftKey&&e.key==='F10')||e.key==='ContextMenu'){
+          e.preventDefault();panel.hidden=false;desktopApi.setIgnore(false);
+        }else if(e.key==='Escape'&&!panel.hidden){panel.hidden=true;}
       });
       on(panel,'click',e=>{
         const act=e.target?.dataset?.act;if(!act)return;
