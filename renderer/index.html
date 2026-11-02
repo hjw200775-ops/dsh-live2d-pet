@@ -16,12 +16,10 @@
   <button id="pause" type="button">暂停</button>
   <div id="follow-controls">
     <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
-    <label for="follow-range">识别范围（以头部为中心）</label>
-    <select id="follow-range" aria-label="鼠标识别范围">
-      <option value="200">近 · 半径 200</option>
-      <option value="400" selected>中 · 半径 400</option>
-      <option value="600">远 · 半径 600</option>
-    </select>
+    <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
+    <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
+    <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
+    <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
   </div>
   <button data-act="refresh" type="button">刷新余额</button>
   <button data-act="pin" type="button">取消置顶</button>

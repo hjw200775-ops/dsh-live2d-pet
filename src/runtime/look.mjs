@@ -3,69 +3,95 @@
  *
  * 内置的 model.focus() 把指针方向算成单位向量再乘 30 度：不管离多远，只要方向变了
  * 就是满偏，而且内置缓动很快 —— 所以看起来"一动就甩头、停住又甩回来"。
- * 这里改成：按距离成比例 + 死区 + 指数平滑 + 一段时间没动静就慢慢回正。
+ * 软饱和映射 + 独立眼球/头部临界阻尼；范围内保持注视，移出后平滑回正。
  */
 
-export const DEFAULT_MOUSE_FOLLOW = Object.freeze({ enabled: true, radius: 400 });
+export const DEFAULT_MOUSE_FOLLOW = Object.freeze({ enabled: true, radius: 1200 });
+export const FOLLOW_RADIUS_MIN = 100;
+export const FOLLOW_RADIUS_MAX = 4000;
+
+export function lookOrigin(rect) {
+  // 本项目为全身模型，脸位于画面上方；原来的 0.42 实际落在胸口。
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.24 };
+}
 
 export function normalizeMouseFollow(value, previous = DEFAULT_MOUSE_FOLLOW) {
   return {
     enabled: typeof value?.enabled === 'boolean' ? value.enabled : previous.enabled,
-    radius: [200, 400, 600].includes(value?.radius) ? value.radius : previous.radius,
+    radius: value?.radius === 0 ? 0 : Number.isFinite(value?.radius) && value.radius >= FOLLOW_RADIUS_MIN && value.radius <= FOLLOW_RADIUS_MAX ? Math.round(value.radius) : previous.radius,
   };
 }
 
 export function inFollowRange(pointerX, pointerY, rect, settings = DEFAULT_MOUSE_FOLLOW) {
+  const center = lookOrigin(rect);
   return settings.enabled && Number.isFinite(pointerX) && Number.isFinite(pointerY)
-    && Math.hypot(pointerX - rect.left - rect.width / 2, pointerY - rect.top - rect.height * 0.42) <= settings.radius;
+    && (settings.radius === 0 || Math.hypot(pointerX - center.x, pointerY - center.y) <= settings.radius);
 }
 
-export function lookTarget(pointerX, pointerY, rect, { deadZone = 0.1, max = 1 } = {}) {
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height * 0.42; // 头的位置略高于画面中心
-  const nx = (pointerX - centerX) / Math.max(1, rect.width * 0.5);
-  const ny = (pointerY - centerY) / Math.max(1, rect.height * 0.5);
-  const shape = value => {
-    const magnitude = Math.abs(value);
-    if (magnitude <= deadZone) return 0;
-    const scaled = (magnitude - deadZone) / (1 - deadZone);
-    return Math.sign(value) * Math.min(1, scaled) * max;
-  };
-  // 屏幕坐标 y 向下，模型参数 y 向上
-  return { x: shape(nx), y: shape(-ny) };
+export function lookTarget(pointerX, pointerY, rect, { radius = DEFAULT_MOUSE_FOLLOW.radius, max = 1 } = {}) {
+  if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return {x:0,y:0};
+  const center = lookOrigin(rect);
+  const scale = Math.max(180, (radius || 1200) * 0.55);
+  const dx = pointerX - center.x, dy = center.y - pointerY;
+  // 圆滑饱和，没有硬死区或刚离开脸部就满偏的问题；斜向幅度也有界。
+  const denominator = Math.hypot(scale, dx, dy);
+  return {x: dx / denominator * max, y: dy / denominator * max};
 }
 
-export function createLookFollower({ smoothing = 0.18, idleMs = 2200 } = {}) {
-  let x = 0;
-  let y = 0;
+function spring(value, velocity, target, omega, dt) {
+  const offset = value - target;
+  const impulse = velocity + omega * offset;
+  const decay = Math.exp(-omega * dt);
+  return [target + (offset + impulse * dt) * decay, (velocity - omega * impulse * dt) * decay];
+}
+
+export function createLookFollower({ smoothing = 0.18, idleMs = Infinity } = {}) {
+  let head = {x:0,y:0}, eye = {x:0,y:0};
+  let headVelocity = {x:0,y:0}, eyeVelocity = {x:0,y:0};
   let targetX = 0;
   let targetY = 0;
   let lastInput = -Infinity;
   let lastTime = null;
+  let tracking = false;
+  let headTarget = {x:0,y:0};
+  let headChangedAt = -Infinity;
+  const clamp = value => Math.max(-1, Math.min(1, value));
 
   return {
     setTarget(point, now) {
-      targetX = point.x ?? 0;
-      targetY = point.y ?? 0;
+      const nextX = clamp(Number.isFinite(point.x) ? point.x : 0);
+      const nextY = clamp(Number.isFinite(point.y) ? point.y : 0);
+      // 小移动也保留；头部略晚于眼睛响应，但连续移动不能不断重置延迟。
+      if (!tracking || Math.hypot(nextX-targetX,nextY-targetY)>0.65) headChangedAt = now;
+      targetX = nextX;
+      targetY = nextY;
       lastInput = now;
+      tracking = true;
     },
+    release() { tracking=false; targetX=targetY=0; headTarget={x:0,y:0}; },
     update(now) {
-      const dt = lastTime === null ? 1 / 60 : Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
+      const gap = lastTime === null ? 0 : Math.max(0, (now - lastTime) / 1000);
+      const dt = lastTime === null || gap > 0.2 ? 1 / 60 : Math.min(0.1, gap);
       lastTime = now;
-      const idleFor = now - lastInput;
-      const goalX = idleFor > idleMs ? 0 : targetX;
-      const goalY = idleFor > idleMs ? 0 : targetY;
-      const alpha = 1 - Math.exp(-dt / smoothing);
-      x += (goalX - x) * alpha;
-      y += (goalY - y) * alpha;
-      return { x, y, active: idleFor <= idleMs };
+      if (now-lastInput>idleMs) tracking=false;
+      if (!tracking || now-headChangedAt>=55) headTarget={x:tracking?targetX:0,y:tracking?targetY:0};
+      for (const axis of ['x','y']) {
+        [head[axis],headVelocity[axis]]=spring(head[axis],headVelocity[axis],headTarget[axis],1.8/smoothing,dt);
+        head[axis]=clamp(head[axis]);
+        const target=tracking?(axis==='x'?targetX:targetY):0;
+        // 眼睛先捕获目标，头转过去后眼球稍微回收，避免两者同幅同速粘在一起。
+        const eyeTarget=clamp(target*0.6+(target-head[axis])*0.4);
+        [eye[axis],eyeVelocity[axis]]=spring(eye[axis],eyeVelocity[axis],eyeTarget,20,dt);
+        eye[axis]=clamp(eye[axis]);
+      }
+      return { x:head.x, y:head.y, eyeX:eye.x, eyeY:eye.y, active:tracking };
     },
     get active() {
-      return lastInput !== -Infinity && (lastTime ?? 0) - lastInput <= idleMs;
+      return tracking || Math.hypot(head.x,head.y,eye.x,eye.y)>0.015;
     },
+    get moving() { return Math.hypot(head.x-headTarget.x,head.y-headTarget.y,headVelocity.x,headVelocity.y,eyeVelocity.x,eyeVelocity.y)>0.02; },
     reset() {
-      x = 0;
-      y = 0;
+      head={x:0,y:0};eye={x:0,y:0};headVelocity={x:0,y:0};eyeVelocity={x:0,y:0};headTarget={x:0,y:0};tracking=false;
       targetX = 0;
       targetY = 0;
       lastInput = -Infinity;
@@ -74,14 +100,14 @@ export function createLookFollower({ smoothing = 0.18, idleMs = 2200 } = {}) {
   };
 }
 
-/** 把归一化的跟随量换算成参数增量（度/比例）。幅度故意压小，真人转头的幅度也就几度。 */
-export const LOOK_GAIN = { headX: 7, headY: 5.5, eyeX: 0.42, eyeY: 0.3 };
+/** 头部和眼球分别输出增量；眼球包含捕获目标和头部转动后的补偿。 */
+export const LOOK_GAIN = { headX: 10, headY: 6.5, eyeX: 0.5, eyeY: 0.4 };
 
-export function lookParameters({ x, y }) {
+export function lookParameters({ x, y, eyeX = x, eyeY = y }) {
   return {
     ParamAngleX: x * LOOK_GAIN.headX,
     ParamAngleY: y * LOOK_GAIN.headY,
-    ParamEyeBallX: x * LOOK_GAIN.eyeX,
-    ParamEyeBallY: y * LOOK_GAIN.eyeY,
+    ParamEyeBallX: eyeX * LOOK_GAIN.eyeX,
+    ParamEyeBallY: eyeY * LOOK_GAIN.eyeY,
   };
 }

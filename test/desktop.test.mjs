@@ -13,8 +13,12 @@ test('鼠标跟随开关与范围可保存重载，旧设置和损坏值回落�
   const file=path.join(dir,'desktop-preferences.json');
   await saveDesktopPreferences(file,{mouseFollow:{enabled:false,radius:600}});
   assert.deepEqual((await loadDesktopPreferences(file)).mouseFollow,{enabled:false,radius:600});
-  assert.deepEqual(sanitizeDesktopPreferences({}).mouseFollow,{enabled:true,radius:400});
-  assert.deepEqual(sanitizeDesktopPreferences({mouseFollow:{enabled:'false',radius:-1}}).mouseFollow,{enabled:true,radius:400});
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:true,radius:1875}});
+  assert.equal((await loadDesktopPreferences(file)).mouseFollow.radius,1875);
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:true,radius:0}});
+  assert.equal((await loadDesktopPreferences(file)).mouseFollow.radius,0);
+  assert.deepEqual(sanitizeDesktopPreferences({}).mouseFollow,{enabled:true,radius:1200});
+  assert.deepEqual(sanitizeDesktopPreferences({mouseFollow:{enabled:'false',radius:-1}}).mouseFollow,{enabled:true,radius:1200});
 });
 
 test('desktop coordinates keep negatives and recover a missing display', async t => {

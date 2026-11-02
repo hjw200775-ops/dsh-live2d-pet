@@ -58,7 +58,8 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     let mouseFollow=normalizeMouseFollow();
     const notePointer=(pointerX,pointerY,now)=>{
       const rect=document.getElementById('pet').getBoundingClientRect();
-      look.setTarget(inFollowRange(pointerX,pointerY,rect,mouseFollow)?lookTarget(pointerX,pointerY,rect):{x:0,y:0},now);
+      if(inFollowRange(pointerX,pointerY,rect,mouseFollow))look.setTarget(lookTarget(pointerX,pointerY,rect,mouseFollow),now);
+      else look.release();
     };
     // 由本层提供可变周期呼吸，去掉 SDK 同一通道的固定正弦，避免相加后顶到上限。
     const sdkBreath=model.internalModel.breath;
@@ -401,16 +402,22 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     const gaze=createGaze();
     const look=createLookFollower();
     const followButton=document.getElementById('mouse-follow'),followRange=document.getElementById('follow-range');
+    const followNumber=document.getElementById('follow-radius-number'),followUnlimited=document.getElementById('follow-unlimited');
+    let finiteRadius=mouseFollow.radius||1200;
     const paintFollow=()=>{
       followButton.textContent=mouseFollow.enabled?'鼠标跟随：开':'鼠标跟随：关';
       followButton.setAttribute('aria-pressed',String(mouseFollow.enabled));
       followButton.classList.toggle('on',mouseFollow.enabled);
-      followRange.value=String(mouseFollow.radius);
+      if(mouseFollow.radius)finiteRadius=mouseFollow.radius;
+      followRange.value=String(finiteRadius);followNumber.value=String(finiteRadius);
+      followUnlimited.checked=mouseFollow.radius===0;
+      followRange.disabled=followNumber.disabled=followUnlimited.checked;
+      document.getElementById('follow-radius-label').textContent=followUnlimited.checked?'全屏':String(finiteRadius);
+      document.getElementById('follow-radius-unit').hidden=followUnlimited.checked;
     };
     const changeFollow=patch=>{
       mouseFollow=normalizeMouseFollow(patch,mouseFollow);paintFollow();
-      // 关闭或缩小范围后先平滑回正，下一次有效移动再更新目标。
-      look.setTarget({x:0,y:0},performance.now());
+      if(!mouseFollow.enabled)look.release();
       desktopApi?.setMouseFollow?.(mouseFollow);
     };
     document.getElementById('follow-controls').hidden=!desktopApi;
@@ -420,17 +427,26 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       mouseFollow=normalizeMouseFollow(savedFollow);paintFollow();
     }
     on(followButton,'click',()=>changeFollow({enabled:!mouseFollow.enabled}));
+    on(followRange,'input',()=>{
+      finiteRadius=Number(followRange.value);followNumber.value=followRange.value;
+      document.getElementById('follow-radius-label').textContent=followRange.value;
+    });
     on(followRange,'change',()=>changeFollow({radius:Number(followRange.value)}));
+    on(followNumber,'change',()=>{
+      if(followNumber.validity.valid)changeFollow({radius:Number(followNumber.value)});
+      else paintFollow();
+    });
+    on(followUnlimited,'change',()=>changeFollow({radius:followUnlimited.checked?0:finiteRadius}));
     if(desktopApi?.onPointer){
       const unsubscribe=desktopApi.onPointer(point=>{
-        if(disposed||paused||windowDrag)return;
+        if(disposed)return;
         const now=performance.now();
         if(point?.inside&&Number.isFinite(point.x)&&Number.isFinite(point.y)){
           notePointer(point.x,point.y,now);
-          desktopApi.setIgnore(!(document.elementFromPoint(point.x,point.y)?.closest('#panel,#balance,button')||hitAt(point.x,point.y)));
+          if(!windowDrag)desktopApi.setIgnore(!(document.elementFromPoint(point.x,point.y)?.closest('#panel,#balance,button')||hitAt(point.x,point.y)));
         }else if(point?.inside===false){
-          look.setTarget({x:0,y:0},now);
-          if(document.getElementById('panel').hidden)desktopApi.setIgnore(true);
+          look.release();
+          if(!windowDrag&&document.getElementById('panel').hidden)desktopApi.setIgnore(true);
         }
       });
       if(typeof unsubscribe==='function')cleanups.push(unsubscribe);
@@ -471,7 +487,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     function tick(now){
       if(disposed)return;const dt=Math.min(50,now-then);then=now;
       window.__life?.(now);
-      const active=!paused&&(appliedMode!=='idle'||windowDrag||look.active);
+      const active=!paused&&(appliedMode!=='idle'||windowDrag||look.moving);
       const decision=pace.consume(dt,active);
       if(decision.draw&&!paused&&!document.hidden&&!externallyHidden){model.update(decision.step);app.renderer.render(app.stage);frames++;pace.present(now);}
       if(now-lastPaceUi>1000){
