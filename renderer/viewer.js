@@ -269,7 +269,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       });
       window.__life=now=>{
         // 鼠标跟随完全由 lookFollower 驱动，不再用内置 model.focus（那套是"方向满偏"）
-        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag;
+        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag||idleMotion.swaying||idleMotion.shaking;
         if(busy)window.__idleStill=now;
         else if(!window.__idleStill)window.__idleStill=now;
         const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock,dragging:windowDrag,seed:window.__idleSeed||0});
@@ -296,7 +296,10 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     const endDrag=()=>{if(drag)scheduleSave();drag=null;};
     for(const e of ['pointerup','pointercancel','lostpointercapture'])on(canvas,e,endDrag);
     on(canvas,'wheel',e=>{if(windowDrag||(e.buttons&1))return;e.preventDefault();scaleDesktop(Math.exp(-e.deltaY*.001));},{passive:false});
-    on(document.getElementById('pause'),'click',e=>{paused=!paused;e.target.textContent=paused?'继续':'暂停';});
+    on(document.getElementById('pause'),'click',e=>{
+      paused=!paused;e.target.textContent=paused?'继续':'暂停';
+      idleMotion?.cancelLegShake(performance.now()/1000);
+    });
     const manager=model.internalModel.motionManager;
     attachMotionPolicy(manager);
     PIXI.live2d.config.preserveExpressionOnMotion=true;
@@ -347,12 +350,15 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       }
     };
     // Physics reads LeanInput and the skirt parameter before the mesh updates, so the targets have to be in place first.
-    let frameLook={};
+    let frameLook={},frameLegAngle=0;
     const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
     attachNaturalOverlay(model.internalModel,()=>{
       const now=performance.now();
-      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
-      const values=idleMotion.valueAt(now/1000,idleEnabled);
+      const resting=appliedMode==='idle'&&!motionLocked&&!windowDrag&&!paused;
+      const idleEnabled=resting&&!gestureLock;
+      const values=idleMotion.valueAt(now/1000,idleEnabled,{resting});
+      frameLegAngle=values.LEGAngleZ2||0;
+      delete values.LEGAngleZ2;
       const point=look.update(now);
       frameLook=followEnabled()?lookParameters(point):{};
       // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
@@ -368,6 +374,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     model.internalModel.on('beforeModelUpdate',()=>{
       const now=performance.now();
       const coreModel=model.internalModel.coreModel;
+      // LEGAngleZ2 is written by PhysicsSetting17. Apply the additive tremor only
+      // after physics, where it affects the paired legs without moving the torso/skirt.
+      if(frameLegAngle)coreModel.addParameterValueById('LEGAngleZ2',frameLegAngle);
       if(appliedMode==='answering')coreModel.setParameterValueById('ParamMouthOpenY',.18+.32*(1+Math.sin(now*.017)));
       applyWardrobe(coreModel);
       // 空闲小动作不再禁用跟随；头部控制器已在物理之前叠加，这里只叠加眼珠。
@@ -404,6 +413,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     if(!report.idle)throw new Error('缺少 Idle 动作');
     const seed=Math.floor(Math.random()*4294967296);
     const idleMotion=createIdleMotion({seed});
+    window.__dshLegShake=()=>idleMotion.legState;
+    window.__dshTriggerLegShake=()=>idleMotion.triggerLegShake();
+    window.__dshOverlay=()=>({look:{...frameLook},legAngle:frameLegAngle,bodySway:idleMotion.swaying,gestureLock,motionLocked,paused,windowDrag});
     const blink=createBlink({seed:seed+1});
     const gaze=createGaze();
     const look=createLookFollower();

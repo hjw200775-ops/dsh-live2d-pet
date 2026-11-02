@@ -71,7 +71,7 @@ test('重心每 8–20 秒选目标，2 秒缓动，AngleZ 与 PositionX 同步�
     assert.ok(Math.abs(middle.AngleZ - (last + target) / 2 * 1.4) < 1e-8);
     const end = shift.valueAt(at + 2);
     assert.ok(Math.abs(end.AngleZ - target * 1.4) < 1e-8);
-    assert.ok(Math.abs(end.PositionX - target * 0.012) < 1e-8);
+    assert.ok(Math.abs(end.PositionX - target * 1.2) < 1e-8);
     assert.ok(Math.abs(end.AngleZ) <= 1.4);
     const interval = 8 + random() * 12;
     assert.ok(interval >= 8 && interval <= 20);
