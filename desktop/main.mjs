@@ -6,9 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { startViewer } from '../src/viewer-server.js';
 import { createDesktopLink } from '../src/activity.js';
 import { createFileLogger } from '../src/log-file.mjs';
-import { movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
+import { dragCursorOrigin, movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { loadDesktopPreferences, placeBounds, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
 import { rendererRecovery, wakeWindow, acceptPetIpc } from '../src/desktop/session.mjs';
+import { createPointerTracker } from '../src/desktop/pointer.mjs';
+import { normalizeMouseFollow } from '../src/runtime/look.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // 日志默认落盘到 ~/.dsh/live2d/logs/：用户出问题时能把文件直接发过来，不用复述"闪一下就没了"
@@ -33,6 +35,7 @@ let dragging;
 let quitWithHost = false;
 let userHidden = false;
 let rendererReloads = 0;
+let mouseFollow = normalizeMouseFollow();
 const preferencesFile = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
 
 function displays() {
@@ -103,10 +106,10 @@ ipcMain.on('desktop:set-ignore', (event, ignore) => {
   if (!fromPet(event) || dragging) return;
   windowRef.setIgnoreMouseEvents(!!ignore, { forward: true });
 });
-ipcMain.on('desktop:drag-start', event => {
+ipcMain.on('desktop:drag-start', (event, origin) => {
   if (!fromPet(event)) return;
-  const cursor = screen.getCursorScreenPoint();
   const bounds = windowRef.getBounds();
+  const cursor = dragCursorOrigin(bounds, origin, screen.getCursorScreenPoint());
   clearTimeout(zoomJob?.timer);
   zoomJob = null;
   dragging = { window: windowRef, cursor, bounds };
@@ -179,6 +182,13 @@ ipcMain.on('desktop:set-quit-with-host', async (event, value) => {
 });
 ipcMain.on('desktop:quit', event => { if (fromPet(event)) app.quit(); });
 ipcMain.on('desktop:refresh-balance', event => { if (fromPet(event)) desktopLink?.requestRefresh(); });
+ipcMain.handle('desktop:get-mouse-follow', event => fromPet(event) ? mouseFollow : null);
+ipcMain.on('desktop:set-mouse-follow', async (event, value) => {
+  if (!fromPet(event)) return;
+  mouseFollow = normalizeMouseFollow(value, mouseFollow);
+  const previous = await loadDesktopPreferences(preferencesFile());
+  await saveDesktopPreferences(preferencesFile(), { ...previous, mouseFollow });
+});
 ipcMain.on('desktop:drag-end', async event => {
   if (!fromPet(event) || !dragging) return;
   clearTimeout(dragging.frame);
@@ -259,6 +269,7 @@ app.whenReady().then(async () => {
   desktopLink = link;
   viewer = await startViewer({ modelFile: config.modelFile, coreFile: config.coreFile, configDir: process.env.DSH_LIVE2D_CONFIG_DIR || path.dirname(configPath), activity: link, bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json') });
   const saved = await loadDesktopPreferences(preferencesFile());
+  mouseFollow = normalizeMouseFollow(saved.mouseFollow);
   const placed = placeBounds(saved, displays());
   windowRef = createWindow(placed);
   if (saved.alwaysOnTop === false) windowRef.setAlwaysOnTop(false);
@@ -301,6 +312,15 @@ app.whenReady().then(async () => {
     catch { event.preventDefault(); }
   });
   await windowRef.loadURL(viewer.url);
+  // 透明点击穿透窗口的 DOM mousemove 在离开/重新进入时可能断流。
+  // 用 Electron 屏幕坐标兜底；只在识别范围内坐标变化和移出时发送。
+  const pointerTracker = createPointerTracker();
+  const pointerTimer = setInterval(() => {
+    if (!windowRef || windowRef.isDestroyed()) return;
+    const point = pointerTracker.sample(screen.getCursorScreenPoint(), windowRef.getBounds(), windowRef.isVisible(), mouseFollow);
+    if (point) windowRef.webContents.send('desktop:pointer', point);
+  }, 33);
+  windowRef.once('closed', () => clearInterval(pointerTimer));
   const waitForBridge = async () => {
       for (let attempt = 0; attempt < 60; attempt++) {
         const status = await windowRef.webContents.executeJavaScript('({ready:!!window.__dshDesktopReady, status:(document.getElementById("status")||{}).textContent||""})').catch(error => ({ error: String(error) }));

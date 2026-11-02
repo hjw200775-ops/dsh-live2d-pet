@@ -14,6 +14,13 @@
   <button data-act="smaller" type="button">缩小</button>
   <button data-act="reset" type="button">复位大小</button>
   <button id="pause" type="button">暂停</button>
+  <div id="follow-controls">
+    <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
+    <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
+    <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
+    <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
+    <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
+  </div>
   <button data-act="refresh" type="button">刷新余额</button>
   <button data-act="pin" type="button">取消置顶</button>
   <button data-act="quit" type="button">退出</button>

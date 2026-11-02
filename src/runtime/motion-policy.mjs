@@ -10,13 +10,19 @@
 const LOOPING_GROUPS = new Set(['Idle', 'Thinking']);
 
 export function attachMotionPolicy(motionManager, { loopingGroups = LOOPING_GROUPS } = {}) {
+  const applyLoopPolicy = (motion, group) => {
+    const idleGroup = (motionManager.groups && motionManager.groups.idle) || 'Idle';
+    if (typeof motion?.setIsLoop === 'function') motion.setIsLoop(group === idleGroup || loopingGroups.has(group));
+    return motion;
+  };
+  // viewer 在模型加载后安装策略，ALL 预加载的实例也必须补上循环标记。
+  for (const [group, motions] of Object.entries(motionManager.motionGroups || {})) {
+    for (const motion of motions) applyLoopPolicy(motion, group);
+  }
   const createMotion = motionManager.createMotion.bind(motionManager);
   motionManager.createMotion = function createMotionWithLoopPolicy(data, group, definition) {
     const motion = createMotion(data, group, definition);
-    const idleGroup = (this.groups && this.groups.idle) || 'Idle';
-    const shouldLoop = group === idleGroup || loopingGroups.has(group);
-    if (typeof motion.setIsLoop === 'function') motion.setIsLoop(shouldLoop);
-    return motion;
+    return applyLoopPolicy(motion, group);
   };
   motionManager._startMotion = function startMotionCrossfade(motion, onFinish) {
     if (motion && typeof motion.setFinishedMotionHandler === 'function') motion.setFinishedMotionHandler(onFinish);

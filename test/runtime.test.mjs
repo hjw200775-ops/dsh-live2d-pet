@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { applyDrawableColor } from '../src/runtime/drawable-color.mjs';
 import { attachMotionPolicy } from '../src/runtime/motion-policy.mjs';
 
+test('ALL 预加载的待机和思考补上循环标记，一次性动作仍不循环', () => {
+  const clip = () => ({loop:null,setIsLoop(value){this.loop=value;}});
+  const idle=clip(),thinking=clip(),answer=clip(),flinch=clip();
+  attachMotionPolicy({groups:{idle:'Idle'},motionGroups:{Idle:[idle],Thinking:[thinking],Answering:[answer],Flinch:[flinch,null]},createMotion:clip});
+  assert.equal(idle.loop,true);assert.equal(thinking.loop,true);
+  assert.equal(answer.loop,false);assert.equal(flinch.loop,false);
+});
+
 test('nose screen color is scaled by the atlas alpha', () => {
   const opaque = applyDrawableColor([0, 0, 0], 1, [0, 0, 0], [1, 0.965, 0.961]);
   assert.ok(opaque.every((channel, index) => Math.abs(channel - [1, 0.965, 0.961][index]) < 1e-6));

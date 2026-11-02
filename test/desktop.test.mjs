@@ -3,9 +3,31 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
+import { dragCursorOrigin, movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { hitDrawableList } from '../src/runtime/model-hit.mjs';
 import { loadDesktopPreferences, placeBounds, sanitizeDesktopPreferences, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
+
+test('快速单段拖动保留从按下点开始的完整位移，无效起点回落当前指针', () => {
+  const bounds={x:120,y:100,width:460,height:700};
+  const current={x:438,y:460};
+  const origin=dragCursorOrigin(bounds,{x:228,y:320},current);
+  assert.deepEqual(movedWindowBounds(bounds,origin,current),{x:210,y:140,width:460,height:700});
+  for(const bad of [null,{x:NaN,y:1},{x:10000,y:1},{x:-1,y:1}])assert.deepEqual(dragCursorOrigin(bounds,bad,current),current);
+});
+
+test('鼠标跟随开关与范围可保存重载，旧设置和损坏值回落默认', async t => {
+  const dir=await mkdtemp(path.join(os.tmpdir(),'dsh-follow-prefs-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'desktop-preferences.json');
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:false,radius:600}});
+  assert.deepEqual((await loadDesktopPreferences(file)).mouseFollow,{enabled:false,radius:600});
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:true,radius:1875}});
+  assert.equal((await loadDesktopPreferences(file)).mouseFollow.radius,1875);
+  await saveDesktopPreferences(file,{mouseFollow:{enabled:true,radius:0}});
+  assert.equal((await loadDesktopPreferences(file)).mouseFollow.radius,0);
+  assert.deepEqual(sanitizeDesktopPreferences({}).mouseFollow,{enabled:true,radius:1200});
+  assert.deepEqual(sanitizeDesktopPreferences({mouseFollow:{enabled:'false',radius:-1}}).mouseFollow,{enabled:true,radius:1200});
+});
 
 test('desktop coordinates keep negatives and recover a missing display', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-desktop-prefs-'));
