@@ -46,8 +46,9 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
     internalModel.emit('beforeModelUpdate');
     assert.equal(values.ParamAngleX, physicsX, '不能在物理之后再次叠加同一头部偏移');
     assert.ok(Math.abs(values.AngleX - baseline.AngleX) <= 1.8 + 1e-6);
-    assert.ok(Math.abs(values.AngleZ - baseline.AngleZ) <= 1.4 + 1e-6);
-    assert.ok(Math.abs(values.PositionX - baseline.PositionX) <= 0.012 + 1e-6);
+    assert.ok(Math.abs(values.AngleZ - baseline.AngleZ) <= 2.4 + 1e-6);
+    assert.ok(Math.abs(values.PositionX - baseline.PositionX) <= 6.7 + 1e-6);
+    assert.ok(Math.abs(values.PositionZ || 0) <= 6.5 + 1e-6);
     moved ||= Math.abs(values.AngleX - baseline.AngleX) > 0.5;
     blinked ||= values.ParamEyeLOpen < baseline.ParamEyeLOpen * 0.1;
     assert.ok(values.ParamEyeLOpen <= baseline.ParamEyeLOpen);

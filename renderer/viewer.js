@@ -269,7 +269,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       });
       window.__life=now=>{
         // 鼠标跟随完全由 lookFollower 驱动，不再用内置 model.focus（那套是"方向满偏"）
-        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag;
+        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag||idleMotion.swaying;
         if(busy)window.__idleStill=now;
         else if(!window.__idleStill)window.__idleStill=now;
         const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock,dragging:windowDrag,seed:window.__idleSeed||0});
@@ -351,8 +351,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
     attachNaturalOverlay(model.internalModel,()=>{
       const now=performance.now();
-      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
-      const values=idleMotion.valueAt(now/1000,idleEnabled);
+      const resting=appliedMode==='idle'&&!motionLocked&&!windowDrag&&!paused;
+      const idleEnabled=resting&&!gestureLock;
+      const values=idleMotion.valueAt(now/1000,idleEnabled,{resting});
       const point=look.update(now);
       frameLook=followEnabled()?lookParameters(point):{};
       // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
