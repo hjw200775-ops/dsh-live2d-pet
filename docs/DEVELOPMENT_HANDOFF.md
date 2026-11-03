@@ -1,0 +1,204 @@
+# 开发交接中心（Development Handoff）
+
+更新时间：2026-11-04（Asia/Shanghai）。维护者：本轮副机（DSH / DeepSeek）。
+
+本文件是**双设备、双模型平行开发**的唯一状态入口。所有结论以 GitHub 远程仓库、当前源码和可复现测试为准；
+对话记忆、其他设备的本地工作区、历史文档都不能替代本仓库的事实。
+
+> **本轮状态：本文件与 `AGENTS.md` 都是本地新建草稿，尚未 commit / push。**
+> 建立分支 `dev/features` 后写入，用户确认后再提交。
+
+## 1. 仓库与版本基线
+
+| 项目 | 当前依据 |
+| --- | --- |
+| 远程仓库 | `https://github.com/hjw200775-ops/dsh-live2d-pet`（public，默认分支 `main`） |
+| npm 包名 | `dsh-deepseek-live2d`，版本 `0.7.3`（见 `package.json`） |
+| **稳定基线 Commit** | **`63acf4143ff8f5547a0f980fb91f4f45e1ce73ea`**（`main`，2026-11-02 18:34:38 +0800，`0.7.3: 完成阶段A待机自然化与自然注视实机验收`） |
+| 最新 Tag | `v0.7.3` → `fb7edce`（比基线早 2 个提交，tag 指向的是「鼠标跟随」那一版） |
+| 最新 Release | `v0.7.3`（2026-11-01T16:32Z，附件 `dsh-deepseek-live2d-0.7.3.tgz`） |
+| 远端分支 | `main`、`codex/stage-a-idle-sway`、`codex/stage-a-natural-idle` |
+| 基线规模 | 96 个已跟踪文件；`src/` 36、`test/` 28、`scripts/` 8、`docs/` 6、`renderer/` 4、`desktop/` 3 |
+
+### 1.1 仓库身份确认（防止认错仓库）
+
+- `hjw200775-ops` 名下与桌宠相关的仓库**只有这一个**；另有 `Publish-to-npm`（空仓库）和 `MyAI`（Python，无关）。
+- **注意**：`package.json` 的 `homepage` / `bugs` / `repository`，以及 0.7.3 及更早的 Release 正文里，写的是带结尾横线的
+  `dsh-live2d-pet-`。该名称是**仓库改名前的旧名**，GitHub 目前仍会重定向到 `dsh-live2d-pet`（实测
+  `api.github.com/repos/hjw200775-ops/dsh-live2d-pet-` 返回 200 并给出 `full_name: dsh-live2d-pet`）。
+  也就是旧链接**暂时还能用**，但依赖重定向不可靠。**规范地址一律用 `dsh-live2d-pet`**，代码内链接待专项修正。
+- 判断依据是 remote、`package.json` 的包名与 README 内容一致，而不是仓库名相似。
+
+### 1.2 GitHub 上尚未合并的实验（不得当作基线）
+
+以下分支**没有合并进 `main`**，它们的代码和文档都不代表稳定版：
+
+| 分支 | 领先 `main` | 内容 | 处置 |
+| --- | --- | --- | --- |
+| `codex/stage-a-idle-sway` | 3 个提交（`e5373c7`、`117d323`、`504e1d9`） | 久待身体摆动 `rest-sway.mjs`、双腿轻抖 `leg-shake.mjs`、以及一套旧版交接文档 | **实验，未验收合并**；本轮不读取、不合并、不复用其代码 |
+| `codex/stage-a-natural-idle` | 4 个提交（`cf3d2d4`、`968d6c4`、`cc459f6`、`21c4e8a`） | 待机自然化与鼠标跟随的中间版本 | 其中大部分已通过 `main` 收敛，仅作历史参考 |
+
+**重要区分**：GitHub 上的 `codex/stage-a-idle-sway` 分支带腿抖代码；而**稳定基线 `main` 完全没有腿抖与久待摆动**
+（`src/runtime/leg-shake.mjs`、`rest-sway.mjs` 在 `main` 中不存在）。因此本轮基线按 `main` 处理，
+腿抖作为**未合并实验**记录，禁止当作既有功能引用或发布。
+
+### 1.3 版本对照（npm ↔ GitHub）
+
+| 渠道 | 版本 |
+| --- | --- |
+| GitHub Tags（15） | 0.6.0–0.6.5、0.6.7–0.6.11、0.7.0–0.7.3（**无 0.6.6**） |
+| GitHub Releases | 0.6.0 起每版一个 tgz 附件；模型 zip 挂在 0.6.0 及之后，后续版本正文指回 0.6.5 的链接 |
+| npm `dsh-deepseek-live2d`（11） | 0.6.0、0.6.1、0.6.3、**0.6.6**、0.6.7、0.6.8、0.6.10、0.6.11、0.7.0、0.7.1、**0.7.3**（latest，`gitHead` = `fb7edce`） |
+
+**不一致项**：npm 缺 0.6.2 / 0.6.4 / 0.6.5 / 0.6.9 / 0.7.2；npm 多出 0.6.6（无对应 tag）。
+`0.7.3` 的 npm 产物对应 tag `fb7edce`，**不是**当前基线 `63acf41`。维护 `CHANGELOG.md` 与版本对照表时应以这张表为准。
+
+## 2. 平行开发机制
+
+| 角色 | 负责内容 | 分支 | 主要写入范围 |
+| --- | --- | --- | --- |
+| **主机：GPT Codex** | Live2D 动画、模型变形、动作与物理调优、观感验收 | `codex/<阶段>-<主题>` | `renderer/viewer.js` 的动画/参数层、`src/runtime/` 的动画模块、`desktop/` 的窗口表现 |
+| **副机：DSH / DeepSeek** | 功能模块、交互逻辑、配置管理、AI 对话、TTS | `dev/features`（本轮已建） | `src/index.js`、`src/activity.js`、`src/bridge.mjs`、`src/viewer-server.js`、`src/preferences.js`、`src/desktop/preferences.mjs`、`scripts/`、`client.js`、新增 `src/features/` 与 `test/features/`、`docs/` |
+
+规则：
+
+1. `main` 只能由人工在验收后合并，任何设备不直接提交 `main`，不 force push、不 hard reset。
+2. 一台设备一个工作区：同一工作区同时只允许一个会话写入；换设备前先在本文档登记状态。
+3. 每个功能一个分支，从最新稳定基线切出；合并前必须基于 `main` 重新 rebase 或 merge 并重跑测试。
+4. 动画实验分支与功能分支互不合并，只有在双方都验收后才会经 `main` 汇合。
+
+## 3. 文件归属（谁可以改）
+
+| 区域 / 文件 | 归属 | 说明 |
+| --- | --- | --- |
+| `renderer/viewer.js` 的动画与参数叠加（`tick`、`valueAt`、物理层、motion 调度） | 主机 | 副机不改这段 |
+| `renderer/viewer.js` 的 UI 面板事件绑定（`panel` 的 `data-act` 分支） | 副机 | 只允许在既有分支结构里新增条目，改前登记 |
+| `src/runtime/blink.mjs`、`breathing.mjs`、`gaze.mjs`、`look.mjs`、`noise.mjs`、`fades.mjs`、`fidget.mjs`、`gesture.mjs`、`motion-policy.mjs`、`authored-motions.mjs`、`natural-overlay.mjs` | 主机 | 动画观感相关 |
+| `src/runtime/balance.mjs`、`model-hit.mjs`、`click-motion.mjs`、`wardrobe.mjs`、`frame-pace.mjs`、`host-exit.mjs` | 共用（改动需登记） | 功能与动画都被引用 |
+| `src/index.js`、`src/activity.js`、`src/bridge.mjs`、`src/viewer-server.js`、`src/preferences.js`、`src/desktop/*`、`scripts/*`、`client.js` | 副机 | 事件、路由、配置、脚本 |
+| 新增 `src/features/*`、`test/features/*` | 副机 | 功能模块一律新建文件，尽量不改动既有模块 |
+| `src/model.js`、模型 / Core 资源、`*.model3.json`、`*.physics3.json` | 只读 | **禁止修改**模型、动作参数、变形器、物理配置 |
+| `package.json` / `package-lock.json` | 共用 | 版本号与依赖变更需双方确认 |
+| `docs/DEVELOPMENT_HANDOFF.md`、`AGENTS.md` | 共用 | 交接时更新自己那一段，不覆盖他人结论 |
+| `README.md` | 共用 | 面向用户的描述，改前登记 |
+
+## 4. 共享文件冲突风险
+
+| 文件 | 冲突点 | 规避方式 |
+| --- | --- | --- |
+| `renderer/viewer.js`（512 行） | 动画循环与设置面板在同一文件，最容易冲突 | 主机只改动画段（L300–L510 参数层）；副机只改 L183–L299 的交互/面板段；新功能一律拆成 `src/features/*` 与 `renderer/features/*` 后在少量挂载点引入 |
+| `src/viewer-server.js` | 路由表被功能（新 API）和渲染器（静态资源）同时改 | 新增功能禁止直接写在 `createServer` 里；改为注册 `featureRoutes` 数组，单点接入 |
+| `src/activity.js` | 状态机被两边引用（动画切换 + 功能触发） | 状态枚举固定为 `idle/thinking/answering/error`；新增状态需双方确认 |
+| `src/index.js` | 事件订阅与 `webServer` 注册集中在此 | 新功能的订阅写成独立 `apply` 模块，由 `index.js` 一处 `for` 循环装配 |
+| `package.json` | 版本号被两边同时提升 | 只有合并到 `main` 时才统一改版本；功能分支不改版本 |
+| `test/*.test.mjs` | 共用测试文件名可能重名 | 新增测试放 `test/features/<name>.test.mjs` |
+
+## 5. 已完成 / 待完成
+
+### 5.1 稳定基线已具备（`main` @ `63acf41`）
+
+- 四状态联动：`agent/status`、`agent/assistant-stream`、`agent/error` → `idle/thinking/answering/error`
+- 回环 viewer 服务：令牌保护、模型引用白名单、SSE 推送、偏好读写、telemetry
+- 独立透明桌面窗口（Electron 33.4.11，首次自动下载 + sha256 校验）；可选页面内浮层
+- 资源自动补齐：模型包自动下载、Cubism Core 检测与导入、`doctor` 自检、日志落盘
+- 待机自然化：呼吸、随机连眨、视线漂移、噪声漂移、状态化淡入淡出
+- 鼠标跟随：比例映射 + 死区 + 平滑 + 自动回正 + 范围/全屏设置（已持久化）
+- 点击交互（**已有雏形**）：命中测试区分头部/身体，单击、双击、气泡文字、动作触发
+- 装扮/表情/动作面板（右键菜单、Shift+F10）、暂停/继续、拖动、置顶、随 DSH 退出
+
+### 5.2 待完成（副机方向，均未开始）
+
+- 摸头/长时间悬停等**连续交互手势**（目前只有瞬时 click / double-click）
+- 交互开关的用户配置化与持久化（现在气泡文案与触发条件写死在渲染器里）
+- AI 对话（需要先确认 DSH 插件侧的模型调用能力，见 §10）
+- TTS 语音与口型同步（现有嘴部是正弦示意动画）
+- 设置界面统一入口（现在分散在右键面板与两个偏好文件）
+- 版本与发布资产：`CHANGELOG.md`、版本功能对照表、npm/Release 对应关系
+
+## 6. 本轮（2026-11-04）实测结果
+
+环境：Windows 10/11 x64、Node **v26.13.0**、npm **11.20.0**、git 2.56.0.windows.4。
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| 依赖安装 | `npm ci --ignore-scripts` | 成功，107 个包（使用 `package-lock.json`，未升级依赖） |
+| 全量测试 | `npm test`（= `node --test test/*.test.mjs`） | **112 / 112 通过**，退出码 0 |
+| 全量测试（备用） | `node --test test` | **112 / 112 通过**，退出码 0 |
+| 发布检查 | `node scripts/check_release.mjs` | **96 个已跟踪文件通过**，未发现模型/Core/本机路径/密钥 |
+| 仓库完整性 | `git ls-remote` | 远端 refs 与本地一致；无未推送提交（本轮之前） |
+
+> Windows / PowerShell 直接执行 `node --test test/*.test.mjs` 会因通配符未展开而报「0 个测试」。
+> 请用 `npm test` 或 `node --test test`。这是平台差异，不是测试回归。
+
+## 7. 已知问题
+
+| 问题 | 影响 | 处理 |
+| --- | --- | --- |
+| `package.json` 与 Release 正文的仓库链接带结尾 `-`（`dsh-live2d-pet-`） | 链接 404，用户找不到 Release/模型包 | 待专项修正，涉及 `package.json` 3 处、`README.md`、`src/viewer-server.js` 的报错文案、历史 Release 正文（正文不可改，只改代码内链接） |
+| README 版本信息滞后：写 `0.6.10`、测试数 `30`、仓库链接带 `-` | 误导用户与接手者 | 在功能分支统一更新，需要一次单独提交 |
+| `main` 缺少 `AGENTS.md` 与交接文档 | 新会话没有入口，容易重复摸索 | 本轮新建草稿（未提交） |
+| 两条 `codex/*` 分支长期未合并 | 远端分支与基线持续分叉，容易误用 | 由用户决定「合并 / 归档 / 删除」，本轮不动 |
+| 透明窗口无逐像素点击穿透 | 透明区域仍接收鼠标 | 已知限制，非本轮范围 |
+| 5 张 4096 纹理占显存 | 低配机可能掉帧 | 已知限制，需主机侧优化 |
+| 本机 git 未配置 `user.name` / `user.email` | 提交会被拒或署名错误 | 首次提交前需配置 |
+| 无 `gh` CLI；SSH 无密钥 | 只能用 HTTPS + PAT | 推送前准备凭据，不改动他人凭据 |
+
+## 8. 合并要求
+
+1. 目标分支只能是 `main`，必须走人工确认（用户明确同意）。
+2. 合并前：`npm ci --ignore-scripts` → `npm test` 112 项全绿 → `node scripts/check_release.mjs` 通过。
+3. 涉及 `renderer/viewer.js`、`src/index.js`、`src/activity.js` 的改动，必须在本文档 §3/§4 登记后再合并。
+4. 动画类改动**必须有用户视觉验收记录**；自动测试与截图只能作为证据，不能替代人工确认。
+5. 不得合并未经验收的腿抖/身体摆动实验；不得在合并中夹带 `package.json` 版本号与发布动作。
+6. 禁用：force push、`reset --hard`、删除远端分支、改写历史。
+
+## 9. 本轮建立的本地状态
+
+| 项目 | 值 |
+| --- | --- |
+| 工作目录 | 副机本地新克隆（仓库根目录，路径因机器而异，不进文档）；未使用其他设备的实验代码 |
+| 当前分支 | `dev/features`（从 `63acf41` 切出，尚无提交） |
+| 远程跟踪 | 本地 `dev/features` **尚未设置 upstream**：远端还没有这个分支，首次推送时用 `git push -u origin dev/features`（需用户授权） |
+| 依赖 | 已按锁文件安装到本地 `node_modules`（不入库） |
+| 未提交文件 | `AGENTS.md`、`docs/DEVELOPMENT_HANDOFF.md` |
+
+## 10. 下一步开发任务（待用户确认）
+
+**建议的第一个小功能：交互反馈配置化（Interaction Preferences）**
+
+- 目标：把「点头部/点身体/双击」的反馈从写死改为可配置 —— 文案组、是否启用气泡、是否触发动作、触发冷却。
+- 不碰动画核心：只在 `src/features/interaction-preferences.mjs`（新文件）+ `src/preferences.js` 里加一节配置，
+  渲染器只读取配置对象，不改动画参数。
+- 可独立测试：纯函数 `sanitizeInteractionPreferences()` + 边界用例，不需要启动 Electron。
+- 价值：为后续「AI 对话气泡」「TTS 开关」提供统一的配置骨架。
+
+**需要主机 Codex 协助的部分**：摸头/悬停手势对应的身体与头部动画曲线、口型与眨眼之外的微表情联动、
+点击反馈的动作组合选型。这些涉及 `renderer/viewer.js` 动画层与 `LEGAngleZ2` 一类物理参数，
+不应由副机单方面修改。
+
+**AI 对话与 TTS**：需先完成 DSH 插件能力调研（是否可发起模型调用、是否有原生 TTS），
+结论写入本文档 §10 之后再决定「复用原生」还是「自建最小模块」。在得到用户确认前，不引入任何新 API 服务或付费依赖。
+
+### 10.1 DSH 宿主能力调研（2026-11-04，本机实测）
+
+对 DSH 安装目录下的 `resources\app.asar` 做了二进制字符串扫描（安装路径因机器而异，不写入文档），
+证据为包内代码片段，结论如下：
+
+| 能力 | 宿主是否具备 | 证据 | 对插件的可用性 |
+| --- | --- | --- | --- |
+| LLM 服务 | **有**，服务名 `llm` | 包内 `dsh-llm-deepseek-api-key` / `llm-deepseek-account` 均 `const inject = ["llm"]`；文档片段提到 `ctx.llm.prepareCall()` | 存在，但属于适配器级 API（prepareCall / adapter 字段校验），**不是**一行 `chat()`；需专项试验后再定方案 |
+| 会话/消息事件 | **有** | `this.dispatch.emit("agent/assistant-stream", { frame })`；文档片段说明「render live tokens from `agent/assistant-stream`，Do not poll `agent/status`」 | 已在本插件使用；frame 内含 `text-delta`，可拿到回复文本流 |
+| 语音识别（ASR） | **有** | `SpeechController`（`super(ctx, "speechController", { namespace: "speech" })`，`inject = ["speechToText", "typert"]`，方法 `catalog/follow/configure/prepare/cancelPreparation/transcribe`） | 面向浏览器录音转写，与桌宠场景关系不大 |
+| 语音合成（TTS） | **仅随包带了引擎，未发现对外服务** | `node_modules/sherpa-onnx-node/non-streaming-tts.js`（含 `createOfflineTts`）随宿主分发；但扫描未发现类似 `speechToText` 的 TTS 服务/Remote | 插件理论上可自带 sherpa-onnx 离线模型自建 TTS，但属于**新增依赖与模型资产**，需用户批准 |
+| 插件设置界面 | 通过 cordis 配置 + 客户端插件自绘 | 本仓库已用 `cordis.patch.yml` 的 `config` 与 `client.js` 自绘浮层 | 沿用现有模式即可，无需新框架 |
+
+**因此**：AI 对话优先「试验 `ctx.llm` 的适配器级调用」；TTS 若要做，先用**本地 sherpa-onnx 离线合成**（不引入付费云服务），
+两者都必须先经用户确认，且不得把密钥写进仓库（走 `ctx.credentials`）。
+
+
+## 11. 环境记录
+
+- DSH 安装目录：由用户本机决定（不写入文档），运行时 Node 24.21.0（见安装目录内 `resources/runtime/versions.json`）
+- 插件 `engines`：`node >=22.12`、`dsh ^0.2.0-rc.2`
+- 模型与 Cubism Core：**不在仓库内**，不入库、不提交
+- 模型署名：Kamiya Ryoko（神宫凉子）绘制，霓虹猫_NeonNeko 绑定；再分发授权见 `docs/permission.md`
