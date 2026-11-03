@@ -12,10 +12,11 @@ import { createLookFollower, lookParameters, lookTarget, inFollowRange, normaliz
 import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
+import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText } from './features/interaction-preferences.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
-  let preferences={version:1,model:{zoom:1,x:0,y:0}},zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
+  let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
   function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
@@ -43,6 +44,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     const report=await fetch('status.json').then(r=>r.json());if(!report.ok)throw new Error(report.error);
     preferences=await fetch('preferences.json').then(r=>{if(!r.ok)throw new Error('位置存档读取失败');return r.json();});
     preferencesLoaded=true;
+    interaction=sanitizeInteractionPreferences(preferences.interaction);
     ({zoom=1,x=0,y=0}=preferences.model||{});
     parent.postMessage({type:'dsh-live2d/ready',overlay:preferences.overlay},'*');
     const script=src=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error(`无法加载 ${src}`));document.head.append(s);});
@@ -134,6 +136,45 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       });
       motionHost.append(button);
     }
+    // —— 互动反馈设置：只读写 interaction 配置，不触碰动作曲线与物理参数 ——
+    const interactionUI={
+      head:document.getElementById('interaction-head'),
+      body:document.getElementById('interaction-body'),
+      double:document.getElementById('interaction-double'),
+      cooldown:document.getElementById('interaction-cooldown'),
+      bubbleHead:document.getElementById('interaction-bubble-head'),
+      bubbleBody:document.getElementById('interaction-bubble-body'),
+      bubbleDouble:document.getElementById('interaction-bubble-double'),
+      reset:document.getElementById('interaction-reset'),
+    };
+    const paintInteraction=()=>{
+      if(!interactionUI.head)return;
+      interactionUI.head.checked=interaction.enabled.head;
+      interactionUI.body.checked=interaction.enabled.body;
+      interactionUI.double.checked=interaction.enabled.double;
+      interactionUI.cooldown.value=String(interaction.cooldownMs);
+      interactionUI.bubbleHead.value=formatBubbleText(interaction.bubbles.head);
+      interactionUI.bubbleBody.value=formatBubbleText(interaction.bubbles.body);
+      interactionUI.bubbleDouble.value=formatBubbleText(interaction.bubbles.double);
+    };
+    const applyInteraction=patch=>{
+      interaction=sanitizeInteractionPreferences(patch,interaction);
+      preferences.interaction=interaction;
+      paintInteraction();
+      scheduleSave();
+    };
+    if(interactionUI.head){
+      interactionUI.head.addEventListener('change',()=>applyInteraction({enabled:{head:interactionUI.head.checked}}));
+      interactionUI.body.addEventListener('change',()=>applyInteraction({enabled:{body:interactionUI.body.checked}}));
+      interactionUI.double.addEventListener('change',()=>applyInteraction({enabled:{double:interactionUI.double.checked}}));
+      interactionUI.cooldown.addEventListener('change',()=>applyInteraction({cooldownMs:Number(interactionUI.cooldown.value)}));
+      interactionUI.bubbleHead.addEventListener('change',()=>applyInteraction({bubbles:{head:parseBubbleText(interactionUI.bubbleHead.value)}}));
+      interactionUI.bubbleBody.addEventListener('change',()=>applyInteraction({bubbles:{body:parseBubbleText(interactionUI.bubbleBody.value)}}));
+      interactionUI.bubbleDouble.addEventListener('change',()=>applyInteraction({bubbles:{double:parseBubbleText(interactionUI.bubbleDouble.value)}}));
+      interactionUI.reset.addEventListener('click',()=>applyInteraction(defaultInteractionPreferences()));
+      paintInteraction();
+      window.__dshInteraction=()=>({enabled:{...interaction.enabled},bubbles:{head:[...interaction.bubbles.head],body:[...interaction.bubbles.body],double:[...interaction.bubbles.double]},cooldownMs:interaction.cooldownMs});
+    }
     if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
     paintPressed();
     let drag, windowDrag=false, lean=0, leanTarget=0;
@@ -190,13 +231,16 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       const hoveredUi=target=>!!(target&&target.closest&&target.closest('#panel,#balance,button'));
       const regionAt=y=>{const rect=document.getElementById('pet').getBoundingClientRect();return (y-rect.top)/Math.max(1,rect.height)<.42?'head':'body';};
       const say=text=>{bubble.textContent=text;bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{bubble.hidden=true;},1100);};
+      // 反馈开关、气泡文案与冷却全部来自 interaction 配置；默认值等价于 v0.7.3 的硬编码行为。
+      const sayBubble=kind=>{const text=pickBubble(interaction.bubbles[kind]);if(text)say(text);};
       const react=(kind,point)=>{
         const now=performance.now();
-        if(kind!=='double'&&now-lastReaction<650)return;
+        if(!interaction.enabled[kind])return;
+        if(kind!=='double'&&now-lastReaction<interaction.cooldownMs)return;
         lastReaction=now;
-        if(kind==='head'){nod={start:now,duration:420,amp:-12};say(['嗯？','在的','嘿嘿'][Math.floor(Math.random()*3)]);}
-        else if(kind==='double'){nod={start:now,duration:520,amp:-16};say('嘿嘿！');}
-        else notePointer(point.x,point.y,now);
+        if(kind==='head'){nod={start:now,duration:420,amp:-12};sayBubble('head');}
+        else if(kind==='double'){nod={start:now,duration:520,amp:-16};sayBubble('double');}
+        else {notePointer(point.x,point.y,now);sayBubble('body');}
         const groups=clickMotionGroups(kind,{mode:appliedMode,locked:motionLocked});
         if(groups)void playClickMotions(groups);
       };

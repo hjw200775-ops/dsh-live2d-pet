@@ -25,6 +25,21 @@
   <button data-act="pin" type="button">取消置顶</button>
   <button data-act="quit" type="button">退出</button>
   <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
+  <p class="section">互动反馈</p>
+  <div id="interaction">
+    <label><input id="interaction-head" type="checkbox" checked> 摸头反馈</label>
+    <label><input id="interaction-body" type="checkbox" checked> 身体单击反馈</label>
+    <label><input id="interaction-double" type="checkbox" checked> 双击反馈</label>
+    <label for="interaction-cooldown">冷却（毫秒，0–10000）</label>
+    <input id="interaction-cooldown" type="number" min="0" max="10000" step="50" value="650" aria-label="互动冷却毫秒">
+    <label for="interaction-bubble-head">摸头气泡（逗号分隔，留空不弹）</label>
+    <input id="interaction-bubble-head" type="text" maxlength="600" placeholder="嗯？，在的，嘿嘿" aria-label="摸头气泡文案">
+    <label for="interaction-bubble-body">身体单击气泡</label>
+    <input id="interaction-bubble-body" type="text" maxlength="600" placeholder="留空则不弹" aria-label="身体单击气泡文案">
+    <label for="interaction-bubble-double">双击气泡</label>
+    <input id="interaction-bubble-double" type="text" maxlength="600" placeholder="嘿嘿！" aria-label="双击气泡文案">
+    <button id="interaction-reset" type="button">恢复默认互动设置</button>
+  </div>
   <p class="section">装扮</p>
   <div id="outfit"></div>
   <button data-act="restore" type="button">恢复原始装扮</button>

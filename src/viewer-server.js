@@ -51,6 +51,13 @@ export async function startViewer(config) {
       if (name.endsWith('.mjs')) staticFiles.set(`runtime/${name}`, path.join(runtimeDir, name));
     }
   }
+  // 功能模块（src/features/）与 runtime 同规矩：整目录放行，新增文件不必再登记路由。
+  {
+    const featuresDir = fileURLToPath(new URL('./features/', import.meta.url));
+    for (const name of await readdir(featuresDir)) {
+      if (name.endsWith('.mjs')) staticFiles.set(`features/${name}`, path.join(featuresDir, name));
+    }
+  }
   staticFiles.set('core.js', config.coreFile);
   staticFiles.set('pixi.js', path.resolve(path.dirname(require.resolve('pixi.js')), '../browser/pixi.min.js'));
   staticFiles.set('live2d.js', path.join(path.dirname(require.resolve('pixi-live2d-display')), 'cubism4.min.js'));
