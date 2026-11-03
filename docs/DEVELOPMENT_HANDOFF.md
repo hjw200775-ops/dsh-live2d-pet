@@ -190,7 +190,7 @@
 
 | 能力 | 宿主是否具备 | 证据 | 对插件的可用性 |
 | --- | --- | --- | --- |
-| LLM 服务 | **有**，服务名 `llm` | 包内 `dsh-llm-deepseek-api-key` / `llm-deepseek-account` 均 `const inject = ["llm"]`；文档片段提到 `ctx.llm.prepareCall()` | 存在，但属于适配器级 API（prepareCall / adapter 字段校验），**不是**一行 `chat()`；需专项试验后再定方案 |
+| LLM 服务 | **有**，服务名 `llm` | 包内 `dsh-llm-deepseek-api-key` / `llm-deepseek-account` 均 `const inject = ["llm"]`；详见 §13（`ctx.llm.stream()`） | 存在，但属于适配器级 API（不自动带会话/工具/系统提示词），**不是**一行 `chat()`；需专项试验后再定方案 |
 | 会话/消息事件 | **有** | `this.dispatch.emit("agent/assistant-stream", { frame })`；文档片段说明「render live tokens from `agent/assistant-stream`，Do not poll `agent/status`」 | 已在本插件使用；frame 内含 `text-delta`，可拿到回复文本流 |
 | 语音识别（ASR） | **有** | `SpeechController`（`super(ctx, "speechController", { namespace: "speech" })`，`inject = ["speechToText", "typert"]`，方法 `catalog/follow/configure/prepare/cancelPreparation/transcribe`） | 面向浏览器录音转写，与桌宠场景关系不大 |
 | 语音合成（TTS） | **仅随包带了引擎，未发现对外服务** | `node_modules/sherpa-onnx-node/non-streaming-tts.js`（含 `createOfflineTts`）随宿主分发；但扫描未发现类似 `speechToText` 的 TTS 服务/Remote | 插件理论上可自带 sherpa-onnx 离线模型自建 TTS，但属于**新增依赖与模型资产**，需用户批准 |
@@ -288,15 +288,23 @@
   老存档升级、往返持久化、非法更新回退且文件不损坏、坏存档修正、features 目录暴露、面板控件齐全。
 - `node scripts/check_release.mjs`：通过（无模型/Core/本机路径/密钥）。
 
-## 13. AI 接口预研（只读，未调用任何收费接口）
+## 13. AI 接口预研（只读，未调用任何收费接口、未读取密钥）
+
+调研方式：只读查看本机 Profile 配置、已安装包的类型声明，以及 DSH 官方文档（版本 `dsh-v0.2.1-rc.5`）。
+本机 DSH 版本 `0.2.1-rc.5`，插件 `engines.dsh: ^0.2.0-rc.2` 在 DSH 的 `includePrerelease: true` 规则下**匹配**。
 
 | 项目 | 结论 |
 | --- | --- |
-| 可用接口 | 宿主存在 `llm` 服务（`dsh-llm-*` 插件 `inject = ["llm"]`），文档片段提到 `ctx.llm.prepareCall()`；`ctx.credentials.resolve(name)` 可取已保存的凭据 |
-| 调用方式 | 适配器级：先准备调用参数、再由会话/轮次驱动；**不是**一行 `chat(messages)`。插件若要自建对话，需要自己拼消息、处理流式帧与错误 |
-| 权限限制 | 凭据由宿主保管，插件只能拿到解析结果，不应落盘或输出；模型调用受用户账号余额与配额约束；不得把聊天正文外传 |
-| 实现难度 | 中等偏高：需要先做一次隔离实验验证 `prepareCall` 的入参契约与生命周期（是否必须挂在会话/轮次上），再决定复用还是自建最小模块 |
-| 本轮结论 | 仅记录，不实现、不引入云服务依赖；下一阶段若要推进，先做一个只读 Probe（不真正调用模型） |
+| 服务目录 | `ctx` 由当前 Profile 组合 bundle 决定；desktop Profile 已加载 `dsh-base` + `dsh-web-app`，可用 `llm`、`sessions`、`agents`、`sessionController`、`settings`、`credentials`、`webServer` 等；**没有** `session`/`agent`/`api`/`prompt` 这类顶层服务名 |
+| 能否主动调用模型 | **可以**。Host 插件 `inject = ['llm']` 后调用 `ctx.llm.stream({ provider, model, messages, signal })`，返回 `AsyncIterable<StreamChunk>`，消费完整流即得非流式结果；没有 `chat()` 便捷方法 |
+| 调用层级 | 适配器级：不会自动带 Agent 的会话、工具循环、系统提示词与历史。要保留 DSH 会话语义，应走 `ctx.sessionController.prompt()` 或驱动 `ctx.agents`，并监听 `session/event` |
+| 消息事件 | `agent/assistant-stream` 的 `text-delta` 只是片段，`end` 不含完整回复；完整消息在 `session/event` 的 `user/message`、`assistant/message`（含完整 content 与流记录）。当前 `activity.js` 有意只取状态、丢弃 `text`，做对话时需新增文本聚合或改听 `session/event` |
+| 浏览器侧限制 | 浏览器 Context 不等于 Host Context，`ctx.llm.stream()` 未标为 Remote，不能直接调用；正确做法是由 Host 插件在 `webServer` 上新增对话路由，服务端调用 `ctx.llm` 后以 SSE/JSON 下发，**不向浏览器传密钥** |
+| 凭据 | `ctx.credentials.resolve(name)` 只返回解析结果，插件不应落盘、日志输出或转发 |
+| TTS | **宿主没有 TTS 服务**（服务表只有 `speechToText` / `speechController`，官方 README 明确「语音合成没有服务方法」）。随包的 `sherpa-onnx-win-x64` 在 SenseVoice Provider 里只用于 ASR（`OfflineRecognizer` + `Vad`）。要做 TTS 需插件自建（离线模型 / 系统 `speechSynthesis` / 外部进程），属于新增依赖 |
+| 设置界面 | 持久选项应走 Host 导出的 `Config` + `ctx.settings`（实时字段用 `Volatile`/`.volatile()` 写入 Profile patch）；`cordis.patch.yml` 只是初始配置，不是 UI API。桌宠专属交互 UI 仍由 `client.js` / 渲染器自绘 |
+| 实现难度 | AI 对话：中等（Host 新增一条 SSE 路由 + 流聚合即可，约 1 天量级，但需先确认 provider/model 取值与计费）；TTS：中偏高（选型 + 模型体积 + 授权） |
+| 本轮结论 | 只记录，不实现、不引入云服务依赖、不改 DSH 模型配置；下一阶段若推进，先做**不真正调用模型**的 Probe（只验证 `ctx.llm` 能否注入、`provider/model` 从哪读） |
 
 ## 14. 第二阶段本地状态
 
