@@ -11,6 +11,37 @@ import {createActivity} from './activity.js';
 
 const require = createRequire(import.meta.url);
 const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
+
+/**
+ * 每个写入型接口各自的上限，不要一刀切：
+ * - preferences 要装下最大合法互动配置（3 类 × 12 条 × 40 字中文 ≈ 4.5 KB，
+ *   再叠加 JSON 结构、模型缩放与浮层坐标），取 16 KiB 留出约 3.6 倍余量；
+ * - telemetry 与 bridge 只是状态心跳，保持 2 KiB 的紧边界。
+ */
+export const REQUEST_LIMITS = Object.freeze({ preferences: 16 * 1024, telemetry: 2048, bridge: 2048 });
+
+/** 读 JSON 请求体；超过 limit 后继续把剩余字节读掉（丢弃），再回 413。
+ *  提前 return 而不排空会让客户端卡在“已发完、等响应”的半开状态，实测会挂死。
+ *  丢弃也有硬上限：超过 4×limit 就停止读取，交给 413 的 Connection: close 结束连接。 */
+async function readJsonBody(req, limit) {
+  let size = 0;
+  let tooLarge = false;
+  const parts = [];
+  for await (const part of req) {
+    size += part.length;
+    if (size > limit) {
+      tooLarge = true;
+      parts.length = 0;
+      if (size > limit * 4) break;
+      continue;
+    }
+    if (!tooLarge) parts.push(part);
+  }
+  if (tooLarge) return { tooLarge: true, size };
+  try { return { value: JSON.parse(Buffer.concat(parts).toString('utf8')) }; }
+  catch { return { invalid: true }; }
+}
+
 const mime = name => name.endsWith('.json') ? 'application/json; charset=utf-8' : name.endsWith('.png') ? 'image/png' : name.endsWith('.js') || name.endsWith('.mjs') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream';
 
 export async function startViewer(config) {
@@ -69,9 +100,10 @@ export async function startViewer(config) {
       const url = new URL(req.url, origin);
       if (req.method === 'POST' && url.pathname === '/bridge') {
         if (!bridgeToken || req.headers.authorization !== `Bearer ${bridgeToken}`) { res.writeHead(403).end(); return; }
-        let size = 0; const parts = [];
-        for await (const part of req) { size += part.length;         if (size > 2048) { res.writeHead(413).end(); return; } parts.push(part); }
-        let input; try { input = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { res.writeHead(400).end(); return; }
+        const body = await readJsonBody(req, REQUEST_LIMITS.bridge);
+        if (body.tooLarge) { res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({ error: 'payload-too-large', limit: REQUEST_LIMITS.bridge })); return; }
+        if (body.invalid) { res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'invalid-json' })); return; }
+        const input = body.value;
         if (!['idle', 'thinking', 'answering', 'error'].includes(input.mode)) { res.writeHead(400).end(); return; }
         config.activity?.ingest?.({ mode: input.mode, activeCount: input.activeCount, balance: input.balance });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -83,10 +115,13 @@ export async function startViewer(config) {
       const key = decodeURIComponent(url.pathname.slice(base.length));
       if(req.method==='POST' && ['preferences.json','telemetry.json'].includes(key)) {
         if(req.headers.origin!==origin){res.writeHead(403).end();return;}
-        let size=0;const parts=[];
-        for await (const part of req){size+=part.length;if(size>2048){res.writeHead(413).end();return;}parts.push(part);}
-        let input;try{input=JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{res.writeHead(400).end();return;}
-        if(key==='preferences.json') await preferences.update(input);
+        const isPreferences=key==='preferences.json';
+        const limit=isPreferences?REQUEST_LIMITS.preferences:REQUEST_LIMITS.telemetry;
+        const body=await readJsonBody(req,limit);
+        if(body.tooLarge){res.writeHead(413,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',Connection:'close'}).end(JSON.stringify({error:'payload-too-large',store:isPreferences?'preferences':'telemetry',limit}));return;}
+        if(body.invalid){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:'invalid-json',store:isPreferences?'preferences':'telemetry'}));return;}
+        const input=body.value;
+        if(isPreferences) await preferences.update(input);
         else telemetry={mode:['idle','thinking','answering','error'].includes(input.mode)?input.mode:'idle',frames:Number(input.frames)||0,zoom:Number(input.zoom)||1,x:Number(input.x)||0,y:Number(input.y)||0,expression:String(input.expression||'').slice(0,40),motion:String(input.motion||'').slice(0,40),at:Date.now()};
         res.writeHead(204).end();return;
       }

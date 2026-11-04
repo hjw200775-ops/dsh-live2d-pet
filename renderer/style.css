@@ -16,6 +16,9 @@ canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}canvas
 #panel header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 #panel header strong{font-size:14px}
 #activity{margin:0 0 6px;color:#9eb0c3;font-size:12px}
+#save-state{margin:0 0 6px;font-size:11px;line-height:1.4;color:#8fd7a8}
+#save-state[hidden]{display:none}
+#save-state.error{color:#ff9c9c}
 #panel button{border:0;border-radius:8px;background:#243140;color:#eaf7ff;padding:8px 10px;text-align:left;cursor:pointer}
 #panel button.on{background:#2f6b45}
 #follow-controls{display:flex;flex-direction:column;gap:6px}

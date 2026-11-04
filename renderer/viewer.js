@@ -17,13 +17,31 @@ import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubb
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
   let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
+  const saveState=document.getElementById('save-state');
+  let saveStateTimer;
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
   function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
+  // 只有服务端真的回了 2xx 才显示“已保存”；失败必须留在面板上，不能让用户以为存住了。
+  const paintSaveState=(ok,text)=>{
+    if(!saveState)return;
+    clearTimeout(saveStateTimer);
+    saveState.hidden=false;
+    saveState.textContent=text;
+    saveState.classList.toggle('error',!ok);
+    if(ok)saveStateTimer=setTimeout(()=>{saveState.hidden=true;},1600);
+  };
   const persist=()=>{
     if(!preferencesLoaded)return Promise.resolve();
     clearTimeout(saveTimer);preferences.model={zoom,x,y};
-    return fetch('preferences.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(preferences),keepalive:true}).then(r=>{if(!r.ok)throw new Error('位置存档写入失败');}).catch(e=>{if(!disposed){status.hidden=false;status.textContent=e.message;}});
+    return fetch('preferences.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(preferences),keepalive:true})
+      .then(async r=>{
+        if(r.ok){paintSaveState(true,'设置已保存');return;}
+        let detail='';
+        try{const body=await r.json();if(body?.error==='payload-too-large')detail=`（超过 ${Math.round(Number(body.limit||0)/1024)} KB 上限）`;}catch{/* 错误体不是 JSON 时忽略 */ }
+        throw new Error(r.status===413?`设置太大，没有保存成功${detail}`:`设置没有保存成功（HTTP ${r.status}）${detail}`);
+      })
+      .catch(e=>{paintSaveState(false,`未保存：${e.message}`);if(!disposed){status.hidden=false;status.textContent=e.message;}});
   };
   const scheduleSave=()=>{clearTimeout(saveTimer);saveTimer=setTimeout(persist,150);};
   on(window,'message',e=>{
