@@ -217,3 +217,73 @@ test('上游错误只暴露稳定错误码，日志不含原始 message 与正�
     delete process.env.DSH_LIVE2D_CHAT_REAL;
   }
 });
+test('enabled=false 时即使 backend/consent/mode/env/模型都满足，也绝不调用 llm.stream', async t => {
+  let called = false;
+  const llm = { stream: () => { called = true; return (async function* () { yield { type: 'finish', reason: { kind: 'ok' } }; })(); } };
+  const { bridge } = await startBridge(t, {
+    chat: { enabled: false, mode: 'pet', backend: 'host', realConsent: true },
+    llm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: '不该调用' })).text());
+    assert.equal(frames[0].data.backend, 'simulated');
+    assert.equal(called, false, 'llm.stream 不得被调用');
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('ACL 收敛失败时禁止真实后端，并给出非敏感原因', async t => {
+  const { bridge, logs } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'host', realConsent: true },
+    llm: fakeLlm,
+    agentDefaultModel: fakeModel,
+    restrictFile: async () => false,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: 'acl 失败' })).text());
+    assert.equal(frames[0].data.backend, 'simulated');
+    assert.ok(logs.some(line => line.includes('acl=unavailable')), logs.join('\n'));
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('授权阶段抛异常不会锁死 chatBusy：返回 500 后下一次请求仍可服务', async t => {
+  let first = true;
+  const authorize = async () => {
+    if (first) { first = false; throw new Error('secret config details'); }
+    return { ok: false, reasons: ['forced-simulated'], chat: { mode: 'pet' } };
+  };
+  const { bridge, logs } = await startBridge(t, { authorize });
+  const failed = await post(bridge, { text: '第一下' });
+  assert.equal(failed.status, 500);
+  const next = await post(bridge, { text: '第二下' });
+  assert.equal(next.status, 200);
+  assert.equal(parse(await next.text())[0].data.backend, 'simulated');
+  assert.equal(logs.join('\n').includes('secret config details'), false);
+});
+
+test('恶意错误码与密钥样式内容不会进入 SSE 或日志', async t => {
+  const secret = ['sk', 'abcdefghijklmnopqrstuvwxyz012345'].join('-');
+  const llm = { stream: () => (async function* () { yield { type: 'finish', reason: { kind: 'error', failure: { code: `BAD CODE ${secret}` } } }; })() };
+  const { bridge, logs } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'host', realConsent: true },
+    llm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: `正文 ${secret}` })).text());
+    const error = frames.find(f => f.data.type === 'error');
+    assert.equal(error?.data.code, 'UPSTREAM_ERROR');
+    const joined = logs.join('\n');
+    assert.equal(joined.includes(secret), false);
+    assert.equal(joined.includes('BAD CODE'), false);
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});

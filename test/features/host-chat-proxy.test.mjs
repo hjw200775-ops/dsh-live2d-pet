@@ -18,6 +18,7 @@ async function fixture(t, { backend = 'host', mode = 'pet' } = {}) {
     writeFile(path.join(root, 'core.js'), '// core'),
     writeFile(path.join(root, 'Animation/IDLE.motion3.json'), '{}'),
     writeFile(path.join(root, 'preferences.json'), JSON.stringify({ version: 1, chat: { enabled: true, mode, backend, realConsent: true } })),
+    writeFile(path.join(root, 'preferences.desktop.json'), JSON.stringify({ version: 1, chat: { enabled: true, mode, backend, realConsent: true } })),
   ]);
   const viewer = await startViewer({
     modelFile: path.join(root, 't.model3.json'),

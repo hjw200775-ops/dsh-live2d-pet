@@ -676,3 +676,51 @@ GUI 20 项复跑通过；`check_release` 通过（117 个已跟踪文件）。
 - [ ] 首笔调用后核对额度消耗与取消行为
 - [ ] 关闭 `DSH_LIVE2D_CHAT_REAL` 或删除 `host-bridge.json` 能立即回到模拟
 - [ ] 确认 DSH 侧日志不含正文与密钥
+## 24. 第七阶段最终安全补丁（真实调用前）
+
+### 24.1 准入六条件（新增 enabled、ACL、Desktop-only）
+
+`authorizeRealChat()` 现在要求全部满足，否则一律模拟：
+
+| 条件 | 失败原因码 |
+| --- | --- |
+| `chat.enabled === true` | `chat-disabled` |
+| Desktop 存档 `backend === 'host'` | `backend-not-host` |
+| `chat.realConsent === true` | `no-user-consent` |
+| `chat.mode === 'pet'` | `mode-not-pet` |
+| `DSH_LIVE2D_CHAT_REAL=1` | `env-disabled` |
+| 桥接文件 ACL 收紧成功 | `acl-unavailable` |
+| 模型可解析且 `llm.stream` 存在 | `model-unavailable` / `llm-unavailable` |
+
+**只读 `preferences.desktop.json`**：overlay 存档不再参与真实授权（浮层阶段的"模糊授权"已被移除）；
+overlay 仍可正常聊天，但永远走模拟。请求正文的 `backend`/`mode` 依旧不参与授权。
+
+### 24.2 错误与日志
+
+- 桥接外层 catch 原先会记录 `error.message`，已改为 `safeCode(error)`（白名单 `^[A-Z][A-Z0-9_]{1,39}$`）；
+- `finish.error.code` 与所有 SSE 错误码统一走 `safeCode`，恶意码（空格/正文/密钥样式）归一为 `UPSTREAM_ERROR`；
+- 内层 catch 先写 500 再进 finally，避免"异常时用默认 200 结束空响应"；
+- 测试用运行时拼接的假密钥与含密钥正文，断言 SSE 与日志均不泄漏。
+
+### 24.3 异常路径与 ACL
+
+- 授权、模型解析、请求执行全部在 `try/catch/finally` 内：异常也会释放 `busy`、`AbortController`、监听器；
+  实测"授权抛错 → 500 → 下一次请求正常"；
+- ACL 改为**先对临时文件收紧、再 rename**；`icacls` 失败时 `aclRestricted=false`，
+  日志写 `acl=unavailable` 且真实后端被禁止（只影响真实调用，不影响模拟）。
+
+### 24.4 测试
+
+`npm test`：**245 / 245 通过**（本轮 +7：enabled 拒绝、Desktop/Overlay 冲突、ACL 拒绝、
+授权抛错恢复、恶意错误码/密钥不泄漏、finish 码归一）。
+`check_release` 通过（127 个文件）；GUI 20 项复跑通过。
+
+### 24.5 准入检查表（更新）
+
+- [ ] `chat.enabled = true`、`backend = 'host'`、`realConsent = true`、`mode = 'pet'`
+- [ ] 配置写在 **Desktop 存档**（`preferences.desktop.json`），不是 overlay 存档
+- [ ] Host 环境 `DSH_LIVE2D_CHAT_REAL=1`
+- [ ] `host-bridge.json` 的 ACL 收紧成功（日志 `acl=restricted`，不是 `unavailable`）
+- [ ] 真实 Host 上模型可解析、`llm.stream` 可用
+- [ ] GUI 显示「DSH 模型」而非「已降级」
+- [ ] 首笔调用后核对额度与取消行为；关闭开关立即回到模拟

@@ -103,7 +103,7 @@ function settle({ timedOut, aborted, custom, finish, emitted, write, simulated }
     return { emitted, outcome: 'aborted' };
   }
   if (finish?.reason === 'error') {
-    const code = finish.code || 'UPSTREAM_ERROR';
+    const code = safeCode({ code: finish.code });
     write({ event: 'error', data: { type: 'error', code } });
     return { emitted, outcome: 'error', code };
   }

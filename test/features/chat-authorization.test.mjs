@@ -57,3 +57,32 @@ test('没有模型服务时也拒绝（即使其它条件满足）', async t => 
   assert.equal(auth.ok, false);
   assert.ok(auth.reasons.includes('llm-unavailable'));
 });
+
+test('enabled=false 时即使其它条件齐全也拒绝（chat-disabled）', async t => {
+  const dir = await dirWith(t, { ...fullConsent, enabled: false });
+  const auth = await authorizeRealChat({ configDir: dir, llm: fakeLlm, agentDefaultModel: fakeModel, env: { [REAL_CHAT_ENV]: '1' } });
+  assert.equal(auth.ok, false);
+  assert.ok(auth.reasons.includes('chat-disabled'), JSON.stringify(auth.reasons));
+});
+
+test('overlay 存档不能授权真实调用：只认 preferences.desktop.json', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-auth-overlay-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await writeFile(path.join(dir, 'preferences.json'), JSON.stringify({ version: 1, chat: fullConsent }), 'utf8');
+  const auth = await authorizeRealChat({ configDir: dir, llm: fakeLlm, agentDefaultModel: fakeModel, env: { [REAL_CHAT_ENV]: '1' } });
+  assert.equal(auth.ok, false);
+  assert.ok(auth.reasons.includes('chat-disabled'), JSON.stringify(auth.reasons));
+
+  // 两种文件同时存在且配置冲突时，以 Desktop 为准
+  await writeFile(path.join(dir, 'preferences.desktop.json'), JSON.stringify({ version: 1, chat: { ...fullConsent, enabled: false } }), 'utf8');
+  const conflict = await authorizeRealChat({ configDir: dir, llm: fakeLlm, agentDefaultModel: fakeModel, env: { [REAL_CHAT_ENV]: '1' } });
+  assert.equal(conflict.ok, false);
+  assert.ok(conflict.reasons.includes('chat-disabled'));
+});
+
+test('ACL 未收敛时禁止真实调用（acl-unavailable）', async t => {
+  const dir = await dirWith(t, fullConsent);
+  const auth = await authorizeRealChat({ configDir: dir, llm: fakeLlm, agentDefaultModel: fakeModel, env: { [REAL_CHAT_ENV]: '1' }, aclRestricted: false });
+  assert.equal(auth.ok, false);
+  assert.ok(auth.reasons.includes('acl-unavailable'), JSON.stringify(auth.reasons));
+});

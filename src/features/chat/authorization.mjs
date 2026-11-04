@@ -5,41 +5,46 @@ import { resolveHostModel } from './host-adapter.mjs';
 
 export const REAL_CHAT_ENV = 'DSH_LIVE2D_CHAT_REAL';
 
-const CANDIDATES = ['preferences.desktop.json', 'preferences.json'];
-
 /**
- * 读取用户当前保存的聊天配置（桌面存档优先，其次 overlay）。
- * 只读、失败就退回默认值——授权判断永远不会因为文件缺失而"放行"。
+ * 真实调用只认 **Desktop 窗口** 的存档。
+ *
+ * 本阶段 overlay（页面内浮层）继续只模拟：两种运行模式共享一个模糊的授权入口
+ * 会让"在浮层里点亮开关"变成一条绕过 Desktop 侧确认的路径，因此这里刻意
+ * 只读 preferences.desktop.json，不再回退到 preferences.json。
  */
+export const DESKTOP_CHAT_FILE = 'preferences.desktop.json';
+
 export async function readStoredChat(configDir) {
   if (!configDir) return defaultChatPreferences();
-  for (const name of CANDIDATES) {
-    try {
-      const parsed = JSON.parse(await readFile(path.join(configDir, name), 'utf8'));
-      if (parsed && typeof parsed === 'object' && parsed.chat) return sanitizeChatPreferences(parsed.chat, defaultChatPreferences());
-    } catch { /* 继续尝试下一个文件 */ }
-  }
+  try {
+    const parsed = JSON.parse(await readFile(path.join(configDir, DESKTOP_CHAT_FILE), 'utf8'));
+    if (parsed && typeof parsed === 'object' && parsed.chat) return sanitizeChatPreferences(parsed.chat, defaultChatPreferences());
+  } catch { /* 文件缺失/损坏一律按未授权处理 */ }
   return defaultChatPreferences();
 }
 
 /**
- * 真实调用的唯一准入判定。**不读取请求正文**：backend/mode 一律以用户保存的配置为准，
+ * 真实调用的唯一准入判定。不读取请求正文：backend/mode 一律以 Desktop 存档为准，
  * 因此直接请求 Host 桥接也无法绕过开关。
  *
  * 必须同时满足：
- *  1. 用户保存的 backend 为 host；
- *  2. 用户显式勾选 realConsent（"我知道会产生费用"）；
- *  3. 模式为 pet；
- *  4. 环境变量 DSH_LIVE2D_CHAT_REAL=1；
- *  5. Host 能解析出可用模型且 llm.stream 存在。
+ *  1. 用户启用了聊天（chat.enabled === true）；
+ *  2. Desktop 存档里 backend 为 host；
+ *  3. 用户显式勾选 realConsent；
+ *  4. 模式为 pet；
+ *  5. 环境变量 DSH_LIVE2D_CHAT_REAL=1；
+ *  6. 桥接文件的 Windows ACL 收紧成功（aclRestricted）；
+ *  7. Host 能解析出可用模型且 llm.stream 存在。
  */
-export async function authorizeRealChat({ configDir, llm, agentDefaultModel, env = process.env } = {}) {
+export async function authorizeRealChat({ configDir, llm, agentDefaultModel, env = process.env, aclRestricted = true } = {}) {
   const chat = await readStoredChat(configDir);
   const reasons = [];
+  if (chat.enabled !== true) reasons.push('chat-disabled');
   if (chat.backend !== 'host') reasons.push('backend-not-host');
   if (chat.realConsent !== true) reasons.push('no-user-consent');
   if (chat.mode !== 'pet') reasons.push('mode-not-pet');
   if (env?.[REAL_CHAT_ENV] !== '1') reasons.push('env-disabled');
+  if (aclRestricted !== true) reasons.push('acl-unavailable');
 
   let model = null;
   if (reasons.length === 0) {
