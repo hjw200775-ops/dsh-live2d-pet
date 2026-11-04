@@ -31,7 +31,11 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const key = argv[i];
     const value = argv[i + 1];
-    if (key === '--model' || key === '--core' || key === '--electron' || key === '--workdir' || key === '--port' || key === '--timeout') { args[key.slice(2)] = value; i++; }
+    if (key === '--model' || key === '--core' || key === '--electron' || key === '--workdir' || key === '--port' || key === '--timeout') {
+      const name = key === '--timeout' ? 'timeoutMs' : key.slice(2);
+      args[name] = value;
+      i++;
+    }
     else if (key === '--keep') args.keep = true;
     else if (key === '--help' || key === '-h') args.help = true;
   }
@@ -134,9 +138,9 @@ function connectCdp(url) {
   return { ws, ready, send };
 }
 
-async function waitTarget(port, timeoutMs) {
+async function waitTarget(port, timeoutMs, shouldStop = () => false) {
   const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
+  while (Date.now() < end && !shouldStop()) {
     try {
       const list = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) }).then(r => r.json());
       const page = list.find(target => target.type === 'page' && target.webSocketDebuggerUrl);
@@ -155,10 +159,12 @@ async function launch(args, env) {
   });
 }
 
-async function runChecks(cdp, args, workdir) {
+async function runChecks(cdp, args, workdir, stop = () => false) {
   const { ws, ready, send } = cdp;
   await ready;
   await send('Runtime.enable');
+  const prefsFile = path.join(workdir, 'preferences.desktop.json');
+  const raw = async file => JSON.parse(await readFile(file, 'utf8'));
   const evaluate = async expression => {
     const res = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description || '页面求值失败');
@@ -166,11 +172,19 @@ async function runChecks(cdp, args, workdir) {
   };
 
   for (let i = 0; i < 100; i++) {
+    if (stop()) return { beforeRestart: null, zh: '' };
     if (await evaluate('!!window.__dshDesktopReady && !!window.__dshInteraction').catch(() => false)) break;
     await sleep(400);
   }
   const boot = await evaluate('({ready:!!window.__dshDesktopReady, hook:typeof window.__dshInteraction})');
   check('隔离窗口加载并暴露调试钩子', boot.ready === true && boot.hook === 'function', JSON.stringify(boot));
+
+  // 存档隔离 + 迁移：旧 preferences.json 只读复制成 preferences.desktop.json，旧文件不被改写或删除
+  const migrated = await raw(prefsFile).catch(() => null);
+  const legacyAfter = await raw(path.join(workdir, 'preferences.json')).catch(() => null);
+  check('desktop 存档迁移到位且旧文件保持原样',
+    migrated?.model?.zoom === 1.25 && migrated?.chat?.enabled === true && legacyAfter?.version === 1 && legacyAfter?.model?.zoom === 1.25 && Object.keys(legacyAfter).length === 3,
+    JSON.stringify({ migrated: migrated?.model, legacy: legacyAfter }));
 
   const panel = await evaluate(`(()=>{
     const ids=['interaction-head','interaction-body','interaction-double','interaction-cooldown','interaction-bubble-head','interaction-bubble-body','interaction-bubble-double','interaction-reset'];
@@ -210,8 +224,8 @@ async function runChecks(cdp, args, workdir) {
   const zh = '喵喵喵，在的哦';
   await evaluate(`(()=>{const i=document.getElementById('interaction-bubble-head');i.value=${JSON.stringify(zh)};i.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(1200);
-  const prefs = JSON.parse(await readFile(path.join(workdir, 'preferences.json'), 'utf8'));
-  check('中文气泡写入 preferences.json', JSON.stringify(prefs.interaction?.bubbles?.head) === JSON.stringify(['喵喵喵', '在的哦']), JSON.stringify(prefs.interaction?.bubbles?.head));
+  const prefs = await raw(prefsFile);
+  check('中文气泡写入 preferences.desktop.json', JSON.stringify(prefs.interaction?.bubbles?.head) === JSON.stringify(['喵喵喵', '在的哦']), JSON.stringify(prefs.interaction?.bubbles?.head));
   const saved = await evaluate(`({text:document.getElementById('save-state').textContent,err:document.getElementById('save-state').classList.contains('error'),hidden:document.getElementById('save-state').hidden})`);
   check('保存成功提示出现', saved.text.includes('已保存'), JSON.stringify(saved));
 
@@ -220,11 +234,42 @@ async function runChecks(cdp, args, workdir) {
   await setToggle('interaction-body', false); await sleep(600);
   const failed = await evaluate(`({text:document.getElementById('save-state').textContent,err:document.getElementById('save-state').classList.contains('error'),hidden:document.getElementById('save-state').hidden})`);
   check('413 时显示未保存提示且标红', !failed.hidden && failed.err && failed.text.includes('未保存'), JSON.stringify(failed));
-  const diskAfterFail = JSON.parse(await readFile(path.join(workdir, 'preferences.json'), 'utf8'));
+  const diskAfterFail = await raw(prefsFile);
   check('保存失败时磁盘未被改写', diskAfterFail.interaction?.enabled?.body === true, JSON.stringify(diskAfterFail.interaction?.enabled));
 
   await evaluate(`(()=>{window.fetch=window.__realFetch;const c=document.getElementById('interaction-body');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(1200);
+  // ---- 对话（模拟）----
+  const chatBoot = await evaluate(`({ send:!!document.getElementById('chat-send'), enabled:document.getElementById('chat-enabled').checked, mode:document.getElementById('chat-mode').value })`);
+  check('对话（模拟）控件存在且按配置启用', chatBoot.send === true && chatBoot.enabled === true && chatBoot.mode === 'pet', JSON.stringify(chatBoot));
+
+  await evaluate(`(()=>{const i=document.getElementById('chat-input');i.value='你好呀，能听见吗';document.getElementById('chat-send').click();return true;})()`);
+  let chatDone = null;
+  for (let i = 0; i < 60; i++) {
+    chatDone = await evaluate(`({bubble:document.getElementById('bubble').textContent,state:document.getElementById('chat-state').textContent})`);
+    if (chatDone.state.includes('回复完成')) break;
+    await sleep(300);
+  }
+  check('模拟对话：气泡出现【模拟】回复且明确标注', chatDone?.bubble?.includes('【模拟】') === true && chatDone.bubble.includes('你好呀'), JSON.stringify(chatDone));
+  check('模拟对话：结束后状态为「回复完成（模拟）」', chatDone?.state?.includes('回复完成') === true, JSON.stringify(chatDone?.state));
+
+  await evaluate(`(()=>{const i=document.getElementById('chat-input');i.value='长'.repeat(400);document.getElementById('chat-send').click();return true;})()`);
+  await sleep(250);
+  await evaluate(`(()=>{document.getElementById('chat-stop').click();return true;})()`);
+  let stopped = null;
+  for (let i = 0; i < 30; i++) {
+    stopped = await evaluate(`document.getElementById('chat-state').textContent`);
+    if (stopped.includes('已停止')) break;
+    await sleep(200);
+  }
+  check('模拟对话：停止按钮能中断生成', stopped?.includes('已停止') === true, String(stopped));
+
+  await evaluate(`(()=>{const c=document.getElementById('chat-enabled');c.checked=false;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  await sleep(300);
+  const chatOff = await evaluate(`({disabled:document.getElementById('chat-input').disabled,state:document.getElementById('chat-state').textContent})`);
+  check('关闭对话后输入被禁用并提示未启用', chatOff.disabled === true && chatOff.state.includes('未启用'), JSON.stringify(chatOff));
+  await evaluate(`(()=>{const c=document.getElementById('chat-enabled');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  await sleep(300);
   const beforeRestart = await evaluate('window.__dshInteraction()');
   ws.close();
   return { beforeRestart, zh };
@@ -246,8 +291,17 @@ async function main() {
   }
 
   args.port = Number(args.port || await freePort());
-  const workdir = args.workdir || path.join(os.tmpdir(), 'dsh-live2d-gui-check');
+  // 每次运行一个全新的子目录：既保证迁移/首次启动路径可复现，也不会删用户已有的目录。
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const workdir = args.workdir
+    ? path.join(args.workdir, `run-${stamp}`)
+    : path.join(os.tmpdir(), `dsh-live2d-gui-check-${stamp}`);
   await mkdir(workdir, { recursive: true });
+  // 桌面模式存档按新约定是 preferences.desktop.json；先放一份旧 preferences.json 验证迁移。
+  const prefsFile = path.join(workdir, 'preferences.desktop.json');
+  const legacyPrefsFile = path.join(workdir, 'preferences.json');
+  const legacyValue = { version: 1, model: { zoom: 1.25, x: 0, y: 0 }, chat: { enabled: true, mode: 'pet' } };
+  await writeFile(legacyPrefsFile, JSON.stringify(legacyValue, null, 2), 'utf8');
   const configFile = path.join(workdir, 'config.json');
   await writeFile(configFile, JSON.stringify({ modelFile: args.model, coreFile: args.core, autoFetchModel: false, overlay: false }, null, 2), 'utf8');
 
@@ -262,35 +316,33 @@ async function main() {
   let child;
   let cdp;
   const ports = [args.port];
-  let summary = { ok: false, checks: results };
-  const watchdog = setTimeout(() => {
-    console.error('[gui-check] 超时，清理后退出');
-    killTree(child?.pid);
-    process.exit(4);
-  }, Number(args.timeoutMs));
-  watchdog.unref?.();
+  let timedOut = false;
+  const state = { stop: false };
 
   function cleanup() {
     killTree(child?.pid);
     try { cdp?.ws?.close(); } catch { /* ignore */ }
   }
 
-  try {
+  async function scenario() {
     child = await launch(args, env);
-    const target = await waitTarget(args.port, 90000);
+    if (state.stop) return;
+    const target = await waitTarget(args.port, 90000, () => state.stop);
     const connection = connectCdp(target.webSocketDebuggerUrl);
     cdp = connection;
-    const { beforeRestart, zh } = await runChecks(connection, args, workdir);
+    const { beforeRestart, zh } = await runChecks(connection, args, workdir, () => state.stop);
 
     cleanup();
     await portClosed(args.port);
     await sleep(2500);
+    if (state.stop) return;
 
     // 重启验证用一个新的空闲端口，避免同一端口在 TIME_WAIT 里重绑失败
     args.port = await freePort();
     ports.push(args.port);
     child = await launch(args, env);
-    const target2 = await waitTarget(args.port, 90000);
+    if (state.stop) return;
+    const target2 = await waitTarget(args.port, 90000, () => state.stop);
     const second = connectCdp(target2.webSocketDebuggerUrl);
     cdp = second;
     await second.ready;
@@ -304,21 +356,37 @@ async function main() {
     check('重启后互动配置保留', JSON.stringify(after) === JSON.stringify(beforeRestart), JSON.stringify(after));
     const ui = await second.send('Runtime.evaluate', { expression: `({bubble:document.getElementById('interaction-bubble-head')?.value,body:document.getElementById('interaction-body')?.checked})`, returnByValue: true }).then(r => r.result.value).catch(() => null);
     check('重启后面板回显已保存的中文气泡', ui?.bubble === zh, JSON.stringify(ui));
-    summary.ok = results.every(item => item.ok);
-  } catch (error) {
+  }
+
+  // 超时不直接 process.exit：走统一 finally，保证关窗、释放端口、写报告。
+  const timeoutMs = Number(args.timeoutMs);
+  const deadline = new Promise(resolve => {
+    setTimeout(() => { timedOut = true; state.stop = true; resolve('timeout'); }, timeoutMs).unref?.();
+  });
+  const work = scenario().catch(error => {
+    if (state.stop) return 'stopped';
     console.error('[gui-check] 失败：', error);
     results.push({ name: 'harness', ok: false, detail: String(error) });
+    return 'error';
+  });
+
+  try {
+    const outcome = await Promise.race([work, deadline]);
+    if (outcome === 'timeout') results.push({ name: '整体超时', ok: false, detail: `${timeoutMs}ms 内未完成` });
   } finally {
-    clearTimeout(watchdog);
+    state.stop = true;
     cleanup();
+    await sleep(600);
+    cleanup(); // 超时瞬间可能刚拉起新进程，二次清理兜底
     const released = (await Promise.all(ports.map(port => portClosed(port)))).every(Boolean);
     check('清理后窗口关闭、调试端口释放', released);
-    summary = { ok: results.every(item => item.ok), checks: results, workdir, port: args.port, at: new Date().toISOString() };
-    await writeFile(path.join(workdir, 'report.json'), JSON.stringify(summary, null, 2), 'utf8').catch(() => {});
     const failed = results.filter(item => !item.ok);
+    const summary = { ok: failed.length === 0, timedOut, checks: results, workdir, ports, at: new Date().toISOString() };
+    await writeFile(path.join(workdir, 'report.json'), JSON.stringify(summary, null, 2), 'utf8').catch(() => {});
     console.log(`\nSUMMARY ${results.length - failed.length}/${results.length} 项通过`);
     console.log(`工作目录（含日志与报告）：${workdir}`);
-    if (failed.length) { console.log('FAILED:', JSON.stringify(failed)); process.exitCode = 1; }
+    if (failed.length) console.log('FAILED:', JSON.stringify(failed));
+    process.exitCode = timedOut ? 4 : failed.length ? 1 : 0;
   }
 }
 

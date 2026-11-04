@@ -459,7 +459,7 @@ renderer 点击“和她说话”
 
 | 交付物 | 位置 | 说明 |
 | --- | --- | --- |
-| 隔离 GUI 验收工具 | `tools/gui-check/run.mjs` + `README.md` | 零新依赖（Node 内置 WebSocket/fetch），14 项检查，独立 workdir/userData/配置/日志；只按自己记录的 PID 清理，成功失败都收尾并写 `report.json` |
+| 隔离 GUI 验收工具 | `tools/gui-check/run.mjs` + `README.md` | 零新依赖（Node 内置 WebSocket/fetch），20 项检查（含存档迁移与模拟对话），独立 workdir/userData/配置/日志；只按自己记录的 PID 清理，成功失败都收尾并写 `report.json` |
 | AI 对话只读 Probe | `docs/AI-DIALOG-PROBE.md` | 8 个问题的结论与证据、A/B 模式对比、最小架构、两个架构风险 |
 
 复跑（Windows）：
@@ -473,11 +473,9 @@ node tools/gui-check/run.mjs --model "<…>\大肥鱼.model3.json" --core "<…>
 
 ### 19.1 本轮新增的风险记录（未实现修复）
 
-1. **`EventSource` 不能发 POST**：AI 对话的流式响应改用 `fetch + ReadableStream` 解析 SSE（或两步法
-   POST 换 ticket + GET 订阅），不要用原生 `EventSource`。
-2. **desktop / overlay 共用 `preferences.json`**：两个进程各自持有启动时的内存快照并整份写回，
-   同时或先后修改不同字段会互相覆盖（典型：位置被旧快照写回）。判断为**中高**风险，
-   建议后续用文件锁、写前重读合并，或按模式分文件；本轮只记录，不改存档架构。
+1. **`EventSource` 不能发 POST**：已在第五阶段落实为 `fetch + ReadableStream` 自研 SSE 解析（`src/features/chat/sse.mjs`）。
+2. **desktop / overlay 共用 `preferences.json`**：**第五阶段已修复**——按运行模式分文件（desktop 用
+   `preferences.desktop.json`，overlay 保持 `preferences.json`），并带首次启动安全迁移，详见 §20.1。
 
 
 
