@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGestureRecognizer } from '../../src/runtime/gesture.mjs';
-import { defaultInteractionPreferences, sanitizeInteractionPreferences } from '../../src/features/interaction-preferences.mjs';
+import { defaultInteractionPreferences, sanitizeInteractionPreferences, doubleClickFallbackKind } from '../../src/features/interaction-preferences.mjs';
 
 /**
- * 本文件只“记录”当前手势语义，不改变识别规则。
- * 语义 A（现行）：关闭双击反馈后，双击由识别器判成 double-click，viewer 的 react() 直接返回，
- * 因此两次快速点击**完全无反馈**——第一下也不会退化成单击。
- * 语义 B（备选，未实现）：关闭双击后按两次单击处理，需要改 gesture.mjs 的判定顺序。
+ * 本文件只“记录”识别器与折叠规则，不改变识别规则。
+ * 识别器层面：双击由识别器独吞，不会再补发单击（`expire()` 返回 null）。
+ * 交互层面（第三阶段人工决策 = 方案 C）：关闭双击反馈后，viewer 把这个 double-click
+ * **折叠成一次普通单击**（按点击位置判头部/身体），仍受开关与冷却约束；
+ * 双击反馈开启时保持原语义。方案 B（拆成两次单击）需要改 gesture.mjs，本轮未采用。
  */
 function doubleClickSequence(recognizer, x = 100, y = 100) {
   const events = [];
@@ -19,7 +20,7 @@ function doubleClickSequence(recognizer, x = 100, y = 100) {
   return events;
 }
 
-test('语义 A：双击由识别器独吞，不会再补发单击', () => {
+test('识别器：双击由识别器独吞，不会再补发单击', () => {
   const recognizer = createGestureRecognizer({ slop: 5, holdMs: 180, doubleMs: 260 });
   const events = doubleClickSequence(recognizer);
   assert.equal(events[0].type, 'down');
@@ -29,7 +30,7 @@ test('语义 A：双击由识别器独吞，不会再补发单击', () => {
   assert.equal(events[4].result, null, '双击结束后不应再冒出一次单击');
 });
 
-test('语义 A + 关闭双击开关：手势被识别，但 viewer 的 react() 会直接返回', () => {
+test('方案 C：关闭双击后由 viewer 折叠成一次普通单击，double 本身不触发', () => {
   const interaction = sanitizeInteractionPreferences({ enabled: { double: false } }, defaultInteractionPreferences());
   assert.equal(interaction.enabled.double, false);
 
@@ -38,10 +39,10 @@ test('语义 A + 关闭双击开关：手势被识别，但 viewer 的 react() �
   const finalEvent = events.filter(item => item.type === 'double-click' || item.type === 'click');
   assert.deepEqual(finalEvent.map(item => item.type), ['double-click']);
 
-  // viewer 侧的等价逻辑：disabled → return，所以不会点头、不会弹气泡、也不触发动作组
-  const react = kind => (interaction.enabled[kind] ? `feedback:${kind}` : null);
-  assert.equal(react('double'), null);
-  assert.equal(react('head'), 'feedback:head');
+  // viewer 会把这个 double-click 折算成 head/body 中的一种，且不会触发 double 反馈
+  const folded = doubleClickFallbackKind({ doubleEnabled: interaction.enabled.double, region: 'head' });
+  assert.equal(folded, 'head');
+  assert.equal(interaction.enabled.double, false);
 });
 
 test('对照：单击路径不受双击开关影响', () => {

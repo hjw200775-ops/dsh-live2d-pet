@@ -125,6 +125,7 @@
 | 基线盘点 | `npm test` | **112 / 112 通过** |
 | 第二阶段（功能） | `npm test` | **132 / 132 通过**（+20 互动配置用例） |
 | 第三阶段（审核修订） | `npm test` | **141 / 141 通过**（+5 HTTP 边界、+4 手势语义） |
+| 第三阶段收尾（P2 方案 C） | `npm test` | **148 / 148 通过**（+7 双击折叠用例） |
 | 发布检查 | `node scripts/check_release.mjs` | **103 个已跟踪文件通过**，无模型/Core/本机路径/密钥 |
 | 仓库完整性 | `git ls-remote` | `origin/dev/features` = 本地 `HEAD`，ahead/behind 0/0 |
 
@@ -171,7 +172,7 @@
 | --- | --- |
 | ✅ 已完成 | 交互反馈配置化（摸头/单击/双击开关、气泡文案、冷却、恢复默认） |
 | ✅ 已完成 | P1：preferences 请求体上限与错误反馈（§15） |
-| ⏸ 待人工选择 | P2：双击语义 A / B（§16） |
+| ⏸ 待人工选择 | ~~P2：双击语义 A / B~~ → **已定方案 C 并实现**（§16） |
 | ⏳ 待授权 | 设置项迁移到 DSH 原生 `Config`（§13） |
 | ⏳ 待授权 | AI 对话（先做只读 Probe）、TTS（需选型与模型体积评估） |
 | ⏳ 待排期 | README 版本与链接纠偏、`CHANGELOG.md`、版本对照表 |
@@ -310,7 +311,7 @@
 | --- | --- |
 | 分支 | `dev/features`（从 `63acf41` 切出，已推送并设置 upstream） |
 | 远端 | `origin/dev/features`，与本地一致；`main` 仍为 `63acf41` |
-| 提交 | `35944dd` 交接文档 → `5b9c3dd` 交互配置化 → `17a4ad6`、`a49657f` 文档补充 → `f76d857` P1 请求体上限修复（第三阶段） |
+| 提交 | `35944dd` 交接文档 → `5b9c3dd` 交互配置化 → `17a4ad6`、`a49657f` 文档补充 → `59fca7d` P1 请求体上限修复 → 最新提交 `fix: 双击反馈关闭时折叠为一次单击（方案 C）`（见 `git log -1`） |
 | 未合并 | `main` 未动、`codex/*` 实验分支未动；未发布 npm、未建 Release |
 
 ## 15. 第三阶段：审核修订（P1 请求体上限）
@@ -346,32 +347,47 @@ tests 5 | pass 5 | fail 0
 
 其中「重启后恢复」是真的重建 HTTP 服务：关闭第一个 viewer，用同一份 `preferences.json` 启动第二个再读取。
 
-## 16. P2：双击关闭后的交互语义（待人工选择，本轮未改逻辑）
+### 15.4 GUI 验收中发现并修复的持久化缺陷
 
-先记录现状：`src/runtime/gesture.mjs` 里第二下按下会把第一击的 `armed` 清掉并判定为 `double-click`，
-`renderer/viewer.js` 的 `react()` 在 `interaction.enabled.double === false` 时直接 return。
-所以**关闭双击反馈后，双击完全无反馈，第一下也不会补成单击**（有测试固化，见
-`test/features/gesture-double-semantics.test.mjs`）。
+隔离窗口实测发现：**桌面窗口模式**下 `desktop/main.mjs` 调用 `startViewer()` 时没有传 `preferencesFile`，
+于是 `createPreferences(undefined)` 让偏好只存在内存里——缩放、浮层位置、互动设置重启后全部丢失
+（overlay 模式因为 `src/index.js` 显式传了文件，所以没暴露）。
 
-| | A. 双击关闭 → 双击无任何反馈（现状） | B. 双击关闭 → 按两次普通单击处理 |
-| --- | --- | --- |
-| 需要改哪里 | 不改 | `src/runtime/gesture.mjs` 判定顺序 + 调用方传参 |
-| 归属 | — | `gesture.mjs` 在交接文档里属于**主机（动画）**负责范围，需主机确认 |
-| 用户感受 | 快速连点时"点了没反应" | 每次都能得到反馈，但一次连点会触发两次动作 |
-| 动作干扰 | 无 | 两次 `clickMotionGroups` 可能连播，动作被打断/叠加 |
-| 兼容性 | 与 v0.7.3 完全一致 | 改变既有手势语义；需要回归点击、拖动、双击三个分支 |
-| 测试影响 | 现有 4 项语义测试不变 | 需重写这 4 项，并新增"两次单击都触发"的用例 |
+修复（`desktop/main.mjs`）：把 `preferencesFile` 指向 `configDir/preferences.json`，与 overlay 模式同一份约定；
+桌面窗口自己的窗口/装扮偏好仍写在 userData 的 `desktop-preferences.json`，两份存档互不覆盖。
+该修复单独成一个提交，不与 P2 混在一起。
 
-**折中方案 C（本轮也未实现）**：不动 `gesture.mjs`，只在 `viewer.js` 的 `double-click` 分支里，
-当双击关闭时把这一下当成**一次**单击处理（`react(regionAt(y))`）。这样既不碰主机的识别器，
-也不会连播两次动作；代价是"两次快速点击 = 一次反馈"，仍不是真正的两次单击。
+## 16. P2：双击语义（人工决策 = 方案 C，已实现）
 
-**推荐**：本轮保持 **A**（用户已明确"默认保留现有逻辑、不擅自改变手势识别规则"）；
-若后续希望"点了总有反应"，优先选 **C**（改动面最小、不触碰主机文件），其次才考虑 **B**。
+**决策**：关闭双击反馈时，快速连续点击两次产生**一次普通单击反馈**；双击反馈开启时完全保留原语义。
+
+实现（只动 `renderer/viewer.js` 的手势入口 + 一个纯函数模块，**未改** `src/runtime/gesture.mjs`）：
+
+| 位置 | 改动 |
+| --- | --- |
+| `src/features/interaction-preferences.mjs` | 新增 `doubleClickFallbackKind({doubleEnabled, region})` 与 `shouldFireFeedback({kind, enabled, now, lastReaction, cooldownMs})` |
+| `renderer/viewer.js` `mouseup` 的 `double-click` 分支 | 原来固定 `react('double')`，改为 `react(doubleClickFallbackKind({doubleEnabled, region: regionAt(e.clientY)}), point)` |
+| `renderer/viewer.js` `react()` | 两行开关/冷却判断合并为一次 `shouldFireFeedback(...)` 调用，行为完全等价 |
+
+约束落实：
+
+- 仅 `interaction.enabled.double === false` 时折叠；开启时 `kind` 仍是 `'double'`。
+- 一次双击只调用一次 `react()`，因此最多一次反馈。
+- 折叠后的 `kind` 是 `head`/`body`，所以**照常走单击冷却**、照常受 `motionLocked`/`gestureLock` 与动作组逻辑约束。
+- 目标开关关闭时 `shouldFireFeedback` 返回 false —— 双击无法绕过被关闭的头部/身体反馈。
+- 区域按 `e.clientY` 经 `regionAt()` 判定，与普通单击同一条路径。
+
+测试（`test/features/double-click-fallback.test.mjs`，7 项）：开启时保持 double、关闭时按区域折叠、头部关闭不可绕过、
+冷却边界（`now-last === cooldown` 可触发）、触发后刷新冷却、`cooldownMs=0` 连续可触发、渲染器接线与
+`gesture.mjs` 未被改动。`test/features/gesture-double-semantics.test.mjs` 同步改写为"识别器独吞 + viewer 折叠"。
+
+历史对比（保留备查）：A = 关闭后完全无反馈（原状）；B = 拆成两次单击（需改 `gesture.mjs`，属主机范围，未采用）；
+C = 折叠为一次单击（现方案）。
 
 ## 17. 待人工验收
 
-1. **P2 语义选择**：A（保持）/ B（真两次单击）/ C（折中，一次反馈）。
+1. **P2 方案 C 的观感确认**：关闭双击后快速连点，应只出现一次点头/一次气泡；头部开关关闭时连点头部应毫无反应；
+   双击开关开启时行为与之前完全一致。
 2. **Windows 独立窗口实际观感**：本轮只做到真实 HTTP 层验证，未启动 Electron 窗口（仓库不含模型与 Core，
    本机唯一模型属于另一台设备的隔离目录，启动会额外弹一个透明窗口）。验收步骤见 §12.5，重点看：
    关闭各开关后的反应、冷却手感、气泡文案替换、恢复默认、**重启 DSH 后设置是否保留**、

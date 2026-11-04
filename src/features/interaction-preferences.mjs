@@ -112,3 +112,22 @@ export function parseBubbleText(text) {
 export function formatBubbleText(texts) {
   return Array.isArray(texts) ? texts.join('，') : '';
 }
+
+/**
+ * 方案 C：双击反馈关闭时，把一次双击折叠成**一次**普通单击的反馈类型。
+ * 双击反馈开启时保持原语义（'double'）。区域由调用方按点击位置判定，这里只做映射。
+ */
+export function doubleClickFallbackKind({ doubleEnabled, region }) {
+  if (doubleEnabled) return 'double';
+  return region === 'head' ? 'head' : 'body';
+}
+
+/**
+ * 反馈是否真的触发：先看开关，再看冷却（双击不走冷却）。
+ * 折叠成单击后同样受目标开关与冷却约束，避免借双击绕过被关闭的反馈。
+ */
+export function shouldFireFeedback({ kind, enabled, now, lastReaction, cooldownMs }) {
+  if (!enabled || enabled[kind] !== true) return false;
+  if (kind !== 'double' && now - lastReaction < cooldownMs) return false;
+  return true;
+}

@@ -97,7 +97,7 @@ test('服务端把 src/features 整目录暴露给渲染器，新模块不必逐
 test('渲染器引用互动配置模块并渲染出全部面板控件', async () => {
   const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
   assert.match(viewer, /from '\.\/features\/interaction-preferences\.mjs'/);
-  assert.match(viewer, /interaction\.enabled\[kind\]/);
+  assert.match(viewer, /shouldFireFeedback\(\{kind,enabled:interaction\.enabled/);
   assert.match(viewer, /interaction\.cooldownMs/);
   assert.match(viewer, /pickBubble\(interaction\.bubbles\[kind\]\)/);
   assert.match(viewer, /interactionUI\.reset\.addEventListener\('click'/);

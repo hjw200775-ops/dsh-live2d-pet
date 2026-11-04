@@ -12,7 +12,7 @@ import { createLookFollower, lookParameters, lookTarget, inFollowRange, normaliz
 import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
-import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText } from './features/interaction-preferences.mjs';
+import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText, doubleClickFallbackKind, shouldFireFeedback } from './features/interaction-preferences.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
@@ -253,8 +253,7 @@ import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubb
       const sayBubble=kind=>{const text=pickBubble(interaction.bubbles[kind]);if(text)say(text);};
       const react=(kind,point)=>{
         const now=performance.now();
-        if(!interaction.enabled[kind])return;
-        if(kind!=='double'&&now-lastReaction<interaction.cooldownMs)return;
+        if(!shouldFireFeedback({kind,enabled:interaction.enabled,now,lastReaction,cooldownMs:interaction.cooldownMs}))return;
         lastReaction=now;
         if(kind==='head'){nod={start:now,duration:420,amp:-12};sayBubble('head');}
         else if(kind==='double'){nod={start:now,duration:520,amp:-16};sayBubble('double');}
@@ -291,7 +290,11 @@ import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubb
         if(windowDrag){windowDrag=false;leanTarget=0;gestures.pointerUp(e.clientX,e.clientY,performance.now());desktopApi.dragEnd();return;}
         const decision=gestures.pointerUp(e.clientX,e.clientY,performance.now());
         if(!decision)return;
-        if(decision.type==='double-click')react('double',{x:e.clientX,y:e.clientY});
+        if(decision.type==='double-click'){
+          const point={x:e.clientX,y:e.clientY};
+          // 方案 C：双击反馈关闭时折叠成一次普通单击，区域按点击位置判定；开关与冷却仍由 react() 把关。
+          react(doubleClickFallbackKind({doubleEnabled:interaction.enabled.double,region:regionAt(e.clientY)}),point);
+        }
         if(decision.type==='click-arm'){
           const point={x:e.clientX,y:e.clientY};
           clearTimeout(clickTimer);
