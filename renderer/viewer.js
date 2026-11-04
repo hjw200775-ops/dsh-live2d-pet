@@ -21,6 +21,7 @@ import { createSseParser } from './features/chat/sse.mjs';
   let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),chat=defaultChatPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
   const saveState=document.getElementById('save-state');
   let saveStateTimer;
+  let chatAbort=null;
   const bubbleEl=document.getElementById('bubble');
   let chatBubbleTimer;
   // 对话气泡：streaming 期间保持显示（sticky），结束后 2.5 秒自动隐藏，避免长期挡住模型。
@@ -63,7 +64,7 @@ import { createSseParser } from './features/chat/sse.mjs';
     }
   });
   const dispose=()=>{
-    if(disposed)return;void persist();disposed=true;
+    if(disposed)return;void persist();disposed=true;chatAbort?.abort();clearTimeout(chatBubbleTimer);
     cancelAnimationFrame(raf);clearTimeout(saveTimer);clearTimeout(hideTimer);clearTimeout(paceTimer);clearTimeout(hostExitTimer);clearInterval(telemetryTimer);observer?.disconnect();eventSource?.close();cleanups.splice(0).forEach(f=>f());
     app?.destroy(false,{children:true,texture:true,baseTexture:true});
   };
@@ -213,7 +214,6 @@ import { createSseParser } from './features/chat/sse.mjs';
       stop:document.getElementById('chat-stop'),
       state:document.getElementById('chat-state'),
     };
-    let chatAbort=null;
     const setChatState=(text,isError=false)=>{if(!chatUI.state)return;chatUI.state.textContent=text;chatUI.state.classList.toggle('error',isError);};
     const paintChat=()=>{
       if(!chatUI.enabled)return;
@@ -244,7 +244,12 @@ import { createSseParser } from './features/chat/sse.mjs';
         let payload;try{payload=JSON.parse(data);}catch{return;}
         if(payload?.type==='meta'){if(payload.simulated!==true)failure='unexpected-model';return;}
         if(payload?.type==='delta'&&typeof payload.text==='string'){full+=payload.text;deltas++;showChatBubble(full,true);return;}
-        if(payload?.type==='end'){ended=true;return;}
+        if(payload?.type==='end'){
+          if(payload.reason==='ok')ended=true;
+          else if(payload.reason==='aborted'){if(!failure)failure='aborted';}
+          else failure=payload.reason||'bad-end';
+          return;
+        }
         if(payload?.type==='error'){failure=payload.code||'upstream-error';}
       }});
       try{
@@ -255,7 +260,8 @@ import { createSseParser } from './features/chat/sse.mjs';
         const decoder=new TextDecoder();
         for(;;){const {done,value}=await reader.read();if(done)break;parser.push(decoder.decode(value,{stream:true}));}
         parser.push(decoder.decode());parser.end();
-        if(failure)setChatState(failure==='timeout'?'超时了，已停止':`生成失败：${failure}`,true);
+        if(failure==='aborted')setChatState('已停止生成');
+        else if(failure)setChatState(failure==='timeout'?'超时了，已停止':`生成失败：${failure}`,true);
         else if(!deltas)setChatState('没有收到内容（空流）',true);
         else if(!ended)setChatState('流意外结束（缺少结束事件）',true);
         else setChatState('回复完成（模拟）');
@@ -269,8 +275,8 @@ import { createSseParser } from './features/chat/sse.mjs';
       }
     };
     if(chatUI.enabled){
-      chatUI.enabled.addEventListener('change',()=>applyChat({enabled:chatUI.enabled.checked}));
-      chatUI.mode.addEventListener('change',()=>applyChat({mode:chatUI.mode.value}));
+      chatUI.enabled.addEventListener('change',()=>{if(!chatUI.enabled.checked)stopChat();applyChat({enabled:chatUI.enabled.checked});});
+      chatUI.mode.addEventListener('change',()=>{stopChat();applyChat({mode:chatUI.mode.value});});
       chatUI.send.addEventListener('click',()=>{void sendChat();});
       chatUI.stop.addEventListener('click',stopChat);
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});

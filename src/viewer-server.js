@@ -23,10 +23,19 @@ const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
  */
 export const REQUEST_LIMITS = Object.freeze({ preferences: 16 * 1024, telemetry: 2048, bridge: 2048, chat: 8 * 1024 });
 
-/** 模拟对话的单次超时；测试可用环境变量缩短，不影响生产默认。 */
-const CHAT_TIMEOUT_MS = Number(process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS) > 0
-  ? Number(process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS)
-  : 30000;
+/** 对话相关上限按请求读取，测试可以在同一进程内用环境变量覆盖，生产默认不变。 */
+function chatLimits() {
+  const read = (name, fallback) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  return {
+    timeoutMs: read('DSH_LIVE2D_CHAT_TIMEOUT_MS', 30000),
+    rateLimit: read('DSH_LIVE2D_CHAT_RATE_LIMIT', 6),
+    rateWindowMs: read('DSH_LIVE2D_CHAT_RATE_WINDOW_MS', 60000),
+    scenario: process.env.DSH_LIVE2D_CHAT_SCENARIO || 'ok',
+  };
+}
 
 /** 读 JSON 请求体；超过 limit 后继续把剩余字节读掉（丢弃），再回 413。
  *  提前 return 而不排空会让客户端卡在“已发完、等响应”的半开状态，实测会挂死。
@@ -57,7 +66,7 @@ export async function startViewer(config) {
   const token = randomBytes(24).toString('hex');
   const bridgeToken = config.bridgeFile ? randomBytes(24).toString('hex') : '';
   const preferences=await createPreferences(config.preferencesFile);
-  const streams=new Set();let telemetry=null;let chatBusy=false;
+  const streams=new Set();let telemetry=null;let chatBusy=false;const chatHits=[];
   let state, failure;
   try {
     if (!config.modelFile) throw new Error(
@@ -149,20 +158,32 @@ export async function startViewer(config) {
         const message=validateChatMessage(body.value?.text);
         if(!message.ok){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:message.code,limit:CHAT_LIMITS.messageChars}));return;}
         if(chatBusy){res.writeHead(429,{'Content-Type':'application/json; charset=utf-8','Retry-After':'2'}).end(JSON.stringify({error:'chat-busy'}));return;}
+        // 每分钟最多 CHAT_RATE_LIMIT 次（默认 6）：为将来接真实计费模型预留，本轮也是这套规则。
+        const limits=chatLimits();
+        const now=Date.now();
+        while(chatHits.length && now-chatHits[0]>limits.rateWindowMs) chatHits.shift();
+        if(chatHits.length>=limits.rateLimit) {
+          const retryAfter=Math.max(1,Math.ceil((limits.rateWindowMs-(now-chatHits[0]))/1000));
+          res.writeHead(429,{'Content-Type':'application/json; charset=utf-8','Retry-After':String(retryAfter)}).end(JSON.stringify({error:'rate-limited',retryAfter,limit:limits.rateLimit,windowMs:limits.rateWindowMs}));
+          return;
+        }
+        chatHits.push(now);
         chatBusy=true;
-        res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
-        res.flushHeaders?.();
         const controller=new AbortController();
+        let timer=null,heartbeat=null;
+        const release=()=>{chatBusy=false;if(timer)clearTimeout(timer);if(heartbeat)clearInterval(heartbeat);req.off('close',onClose);res.off('close',onClose);};
         const onClose=()=>{if(!controller.signal.aborted)controller.abort();};
-        req.on('close',onClose);res.on('close',onClose);
-        let timedOut=false;
-        const timer=setTimeout(()=>{timedOut=true;controller.abort();},CHAT_TIMEOUT_MS);
-        const heartbeat=setInterval(()=>{if(!res.writableEnded)res.write(': keepalive\n\n');},10000);
-        const send=frame=>{if(!res.writableEnded)res.write(encodeSseFrame(frame));};
+        const send=frame=>{try{if(!res.writableEnded)res.write(encodeSseFrame(frame));}catch{/* 客户端已断开 */}};
         try {
+          res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
+          res.flushHeaders?.();
+          req.on('close',onClose);res.on('close',onClose);
+          let timedOut=false;
+          timer=setTimeout(()=>{timedOut=true;controller.abort();},limits.timeoutMs);
+          heartbeat=setInterval(()=>{try{if(!res.writableEnded)res.write(': keepalive\n\n');}catch{/* ignore */}},10000);
           send({event:'meta',data:{type:'meta',simulated:true,mode:chat.mode,model:'local-simulator'}});
           let emitted=0;
-          for await (const chunk of streamSimulatedReply({prompt:message.text,mode:chat.mode,signal:controller.signal})) {
+          for await (const chunk of streamSimulatedReply({prompt:message.text,mode:chat.mode,signal:controller.signal,scenario:limits.scenario})) {
             emitted+=chunk.length;
             send({event:'delta',data:{type:'delta',text:chunk}});
           }
@@ -173,13 +194,11 @@ export async function startViewer(config) {
         } catch(error) {
           send({event:'error',data:{type:'error',code:error?.code||'upstream-error'}});
         } finally {
-          clearTimeout(timer);clearInterval(heartbeat);chatBusy=false;
-          req.off('close',onClose);res.off('close',onClose);
-          if(!res.writableEnded)res.end();
+          release();
+          try{if(!res.writableEnded)res.end();}catch{/* 已断开 */}
         }
         return;
-      }
-      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
+      }      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Cache-Control', 'no-store');

@@ -22,7 +22,7 @@ export function simulatedReplyText(prompt, mode = 'pet') {
  * @param {string} options.prompt 用户输入（仅用于拼接回显）
  * @param {'pet'|'follow'} [options.mode]
  * @param {AbortSignal} [options.signal]
- * @param {'ok'|'empty'|'error'|'stall'} [options.scenario] 测试用故障注入
+ * @param {'ok'|'empty'|'error'|'stall'|'hang'} [options.scenario] 测试用故障注入
  * @param {number} [options.chunkSize] 每片字符数
  * @param {number} [options.delayMs] 每片延迟
  */
@@ -35,6 +35,15 @@ export async function* streamSimulatedReply({
   delayMs = 12,
 } = {}) {
   if (scenario === 'empty') return;
+  if (scenario === 'hang') {
+    // 真正挂起，直到被取消：用于验证超时、断连与资源释放。
+    await new Promise(resolve => {
+      if (!signal) return; // 没有信号就永远等待
+      if (signal.aborted) return resolve();
+      signal.addEventListener('abort', resolve, { once: true });
+    });
+    return;
+  }
   const text = simulatedReplyText(prompt, mode);
   const chars = [...text];
   for (let index = 0; index < chars.length; index += chunkSize) {

@@ -53,3 +53,16 @@ test('回复文本本身不会拼出密钥样式的字符串', () => {
   const text = simulatedReplyText('你好', 'pet');
   assert.equal(/sk-[A-Za-z0-9_-]{16,}/.test(text), false);
 });
+
+test('hang 场景真正挂起，取消后立即返回且不产出', async () => {
+  const controller = new AbortController();
+  const chunks = [];
+  const task = (async () => {
+    for await (const chunk of streamSimulatedReply({ prompt: 'x', scenario: 'hang', signal: controller.signal })) chunks.push(chunk);
+  })();
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(chunks.length, 0, '挂起期间不应产出任何分片');
+  controller.abort();
+  await task;
+  assert.deepEqual(chunks, []);
+});

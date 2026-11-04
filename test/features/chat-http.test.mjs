@@ -25,11 +25,12 @@ async function fixture(t, { chat = { enabled: true, mode: 'pet' } } = {}) {
   return { root, preferencesFile, viewer, base: new URL('.', viewer.url) };
 }
 
-function post(base, body, { origin = base.origin, raw } = {}) {
+function post(base, body, { origin = base.origin, raw, signal } = {}) {
   return fetch(new URL('chat', base), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}) },
     body: raw ?? JSON.stringify(body),
+    signal,
   });
 }
 
@@ -137,4 +138,71 @@ test('渲染器接线：fetch + ReadableStream 解析、停止按钮、500 字�
     assert.ok(html.includes(`id="${id}"`), `缺少控件 ${id}`);
   }
   assert.match(html, /对话（模拟）/);
+});
+
+test('限流：每分钟最多 6 次，第 7 次返回 429 rate-limited', async t => {
+  const { base } = await fixture(t);
+  for (let i = 0; i < 6; i++) {
+    const response = await post(base, { text: `第${i}条` });
+    assert.equal(response.status, 200, `第 ${i + 1} 次应通过`);
+    await response.text();
+  }
+  const blocked = await post(base, { text: '第七条' });
+  assert.equal(blocked.status, 429);
+  const body = await blocked.json();
+  assert.equal(body.error, 'rate-limited');
+  assert.equal(body.limit, 6);
+  assert.equal(blocked.headers.get('retry-after') !== null, true);
+});
+
+test('上游挂起：超时返回 error{timeout}，且 chatBusy 必然释放', async t => {
+  process.env.DSH_LIVE2D_CHAT_SCENARIO = 'hang';
+  process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS = '300';
+  try {
+    const { base } = await fixture(t);
+    const response = await post(base, { text: '会超时' });
+    assert.equal(response.status, 200);
+    const frames = parseSse(await response.text());
+    const error = frames.find(frame => frame.data.type === 'error');
+    assert.equal(error?.data.code, 'timeout');
+    assert.equal(frames.some(frame => frame.data.type === 'end'), false);
+
+    // 超时后必须已经释放 busy：下一条请求应正常开始
+    delete process.env.DSH_LIVE2D_CHAT_SCENARIO;
+    const next = await post(base, { text: '下一条' });
+    assert.equal(next.status, 200);
+    assert.ok((await next.text()).includes('data:'));
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_SCENARIO;
+    delete process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS;
+  }
+});
+
+test('客户端中途断开：服务端释放 busy，后续请求仍可开始', async t => {
+  const { base } = await fixture(t);
+  const controller = new AbortController();
+  const response = await post(base, { text: '会被中断' }, { signal: controller.signal }).catch(() => null);
+  const reader = response?.body?.getReader();
+  await reader?.read();
+  controller.abort();
+  await new Promise(resolve => setTimeout(resolve, 400));
+  const next = await post(base, { text: '断开之后' });
+  assert.equal(next.status, 200);
+  await next.text();
+});
+
+test('渲染器区分 end.reason，异常结束不会被当成成功', async () => {
+  const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
+  assert.match(viewer, /payload\.reason==='ok'/);
+  assert.match(viewer, /payload\.reason==='aborted'/);
+  assert.match(viewer, /failure=payload\.reason\|\|'bad-end'/);
+  assert.match(viewer, /if\(failure==='aborted'\)setChatState\('已停止生成'\)/);
+  assert.match(viewer, /!ended\)setChatState\('流意外结束/);
+});
+
+test('渲染器在卸载/禁用/切换模式时取消未结束请求并清理定时器', async () => {
+  const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
+  assert.match(viewer, /disposed=true;chatAbort\?\.abort\(\);clearTimeout\(chatBubbleTimer\)/);
+  assert.match(viewer, /if\(!chatUI\.enabled\.checked\)stopChat\(\)/);
+  assert.match(viewer, /chatUI\.mode\.addEventListener\('change',\(\)=>\{stopChat\(\)/);
 });

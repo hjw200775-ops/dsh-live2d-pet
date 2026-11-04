@@ -57,6 +57,8 @@ export function createSseParser({ onFrame } = {}) {
       for (;;) {
         const match = buffer.match(/\r\n|\n|\r/);
         if (!match) return;
+        // 末尾单独的 \r 可能只是 CRLF 的前半截：等下一块确认，避免把一行提前切断。
+        if (match[0] === '\r' && match.index === buffer.length - 1) return;
         const index = match.index;
         const separatorLength = match[0].length;
         const line = buffer.slice(0, index);
@@ -65,7 +67,9 @@ export function createSseParser({ onFrame } = {}) {
       }
     },
     end() {
-      if (buffer) { handleLine(buffer); buffer = ''; }
+      // 收尾时末尾的 \r 按行结束处理（不会再等下一块了）。
+      if (buffer.endsWith('\r')) { handleLine(buffer.slice(0, -1)); buffer = ''; }
+      else if (buffer) { handleLine(buffer); buffer = ''; }
       if (dataLines.length) dispatch();
     },
   };

@@ -78,3 +78,30 @@ test('UTF-8 多字节字符被网络块切断时不乱码', () => {
   assert.equal(frames.length, 1);
   assert.equal(JSON.parse(frames[0].data).text, '中文🙂');
 });
+
+test('CRLF 被拆到两个网络块时不会提前分帧', () => {
+  const stream = 'event: x\r\ndata: {"a":1}\r\n\r\n';
+  for (let cut = 1; cut < stream.length; cut++) {
+    const { frames, parser } = collect();
+    parser.push(stream.slice(0, cut));
+    parser.push(stream.slice(cut));
+    parser.end();
+    assert.equal(frames.length, 1, `cut=${cut} 产生了 ${frames.length} 帧`);
+    assert.equal(JSON.parse(frames[0].data).a, 1);
+  }
+});
+
+test('末尾只有 \\r 时等待下一块，end() 时按行结束处理', () => {
+  const { frames, parser } = collect();
+  parser.push('event: tail\r');
+  assert.equal(frames.length, 0, '不应在只有 \\r 时提前分帧');
+  parser.push('data: {"b":2}\r\r');
+  parser.end();
+  assert.equal(frames.length, 1);
+  assert.equal(JSON.parse(frames[0].data).b, 2);
+
+  const second = collect();
+  second.parser.push('event: e\ndata: {"c":3}\n');
+  second.parser.end();
+  assert.equal(second.frames.length, 1);
+});
