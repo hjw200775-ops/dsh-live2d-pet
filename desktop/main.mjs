@@ -264,10 +264,20 @@ app.whenReady().then(async () => {
     }
   } catch { /* 迁移失败不影响启动，最多位置回到默认 */ }
   const configPath = process.env.DSH_LIVE2D_CONFIG || path.join(homedir(), '.dsh', 'live2d', 'config.json');
+  const configDir = process.env.DSH_LIVE2D_CONFIG_DIR || path.dirname(configPath);
   const config = await loadConfig(configPath);
   const link = createDesktopLink();
   desktopLink = link;
-  viewer = await startViewer({ modelFile: config.modelFile, coreFile: config.coreFile, configDir: process.env.DSH_LIVE2D_CONFIG_DIR || path.dirname(configPath), activity: link, bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json') });
+  // 渲染器的偏好（缩放、浮层位置、互动设置）必须落盘，否则重启后设置会丢；
+  // 桌面窗口自己的窗口/装扮偏好仍走 userData 下的 desktop-preferences.json，两者不是同一份。
+  viewer = await startViewer({
+    modelFile: config.modelFile,
+    coreFile: config.coreFile,
+    configDir,
+    preferencesFile: path.join(configDir, 'preferences.json'),
+    activity: link,
+    bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json'),
+  });
   const saved = await loadDesktopPreferences(preferencesFile());
   mouseFollow = normalizeMouseFollow(saved.mouseFollow);
   const placed = placeBounds(saved, displays());
