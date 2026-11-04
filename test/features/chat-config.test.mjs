@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CHAT_LIMITS, defaultChatPreferences, sanitizeChatPreferences, validateChatMessage } from '../../src/features/chat/config.mjs';
 
 test('对话默认关闭、follow 模式、256 tokens、6 轮、空人格', () => {
-  assert.deepEqual(defaultChatPreferences(), { enabled: false, mode: 'follow', backend: 'simulated', maxTokens: 256, historyTurns: 6, persona: '' });
+  assert.deepEqual(defaultChatPreferences(), { enabled: false, mode: 'follow', backend: 'simulated', realConsent: false, maxTokens: 256, historyTurns: 6, persona: '' });
 });
 
 test('非对象输入保留上一份配置', () => {
@@ -41,7 +41,7 @@ test('persona 去空白并截断，未知字段被丢弃', () => {
   assert.equal(sanitizeChatPreferences({ persona: 'x'.repeat(300) }, base).persona.length, CHAT_LIMITS.persona.maxLength);
   const next = sanitizeChatPreferences({ evil: 1, maxTokens: 32 }, base);
   assert.equal(next.evil, undefined);
-  assert.deepEqual(Object.keys(next).sort(), ['backend', 'enabled', 'historyTurns', 'maxTokens', 'mode', 'persona']);
+  assert.deepEqual(Object.keys(next).sort(), ['backend', 'enabled', 'historyTurns', 'maxTokens', 'mode', 'persona', 'realConsent']);
 });
 
 test('消息校验：空白、非字符串、超长与边界', () => {

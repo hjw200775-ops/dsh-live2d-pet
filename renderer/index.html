@@ -49,6 +49,13 @@
       <option value="follow">follow：跟随开发会话（示例）</option>
       <option value="pet">pet：桌宠独立聊天</option>
     </select>
+    <label for="chat-backend">后端</label>
+    <select id="chat-backend" aria-label="对话后端">
+      <option value="simulated">本地模拟（默认，无费用）</option>
+      <option value="host">DSH 模型（需 Host 桥接与授权）</option>
+    </select>
+    <label class="warn"><input id="chat-consent" type="checkbox"> 允许真实模型调用（可能产生费用）</label>
+    <p id="chat-warning" hidden>真实模式还需 Host 侧开启 DSH_LIVE2D_CHAT_REAL=1 并经人工审批；未满足前不会发起真实请求。</p>
     <input id="chat-input" type="text" maxlength="500" placeholder="想对她说点什么…" aria-label="对话输入">
     <div class="chat-actions">
       <button id="chat-send" type="button">发送</button>

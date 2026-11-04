@@ -59,8 +59,8 @@ export function mapStreamChunk(chunk) {
     const kind = chunk.reason?.kind;
     if (kind === 'ok') return { kind: 'finish', reason: 'ok' };
     if (kind === 'aborted') return { kind: 'finish', reason: 'aborted' };
-    const code = chunk.reason?.failure?.code || 'UPSTREAM_ERROR';
-    return { kind: 'finish', reason: 'error', code };
+    if (kind === 'error') return { kind: 'finish', reason: 'error', code: chunk.reason?.failure?.code || 'UPSTREAM_ERROR' };
+    return { kind: 'finish', reason: 'error', code: 'UNKNOWN_FINISH' };
   }
   return null;
 }
@@ -69,22 +69,71 @@ export function mapStreamChunk(chunk) {
  * 调用 Host 的 llm.stream，产出统一的 delta / finish。
  * 本轮只接受注入的假对象；真实调用需要先通过 realChatEnabled 的准入检查。
  */
+/** 取消时给上游留的收尾时间；超过就放弃等待，避免"上游不理取消"把请求拖死。 */
+const ABORT_GRACE_MS = 200;
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+/** 等待 iterator.next()，但响应取消：取消后立刻返回 {aborted:true}，不再等上游。 */
+function nextOrAbort(iterator, signal) {
+  if (signal?.aborted) return Promise.resolve({ aborted: true });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => { if (!settled) { settled = true; resolve({ aborted: true }); } };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    iterator.next().then(
+      value => { if (!settled) { settled = true; signal?.removeEventListener('abort', onAbort); resolve({ value }); } },
+      error => { if (!settled) { settled = true; signal?.removeEventListener('abort', onAbort); reject(error); } },
+    );
+  });
+}
+
+/**
+ * 调用 Host 的 llm.stream，产出统一的 delta 与**恰好一个**终止帧：
+ *   { kind:'finish', reason:'ok' }
+ *   { kind:'finish', reason:'aborted' }
+ *   { kind:'finish', reason:'error', code }
+ *
+ * 语义保证：
+ * - 只有适配器明确给出 finish.ok 才算成功；
+ * - aborted 不会被当成正常完成；
+ * - 缺少 finish（迭代器直接结束）判为 NO_FINISH；
+ * - 未知 finish.kind 判为 UNKNOWN_FINISH；
+ * - 取消后不再等待不响应取消的上游，最多等 ABORT_GRACE_MS 做收尾。
+ */
 export async function* streamHostChat({ llm, provider, model, messages, signal, tools }) {
   if (typeof llm?.stream !== 'function') throw new HostChatError('Host 未提供模型服务', 'NO_LLM_SERVICE');
   const iterator = llm.stream({ provider, model, messages, signal, ...(tools ? { tools } : {}) })[Symbol.asyncIterator]();
+  let settled = false;
   try {
     for (;;) {
-      const { done, value } = await iterator.next();
-      if (done) return;
+      const step = await nextOrAbort(iterator, signal);
+      if (step.aborted) {
+        settled = true;
+        try { await Promise.race([Promise.resolve(iterator.return?.()), sleep(ABORT_GRACE_MS)]); } catch { /* 忽略 */ }
+        yield { kind: 'finish', reason: 'aborted' };
+        return;
+      }
+      const { done, value } = step.value;
+      if (done) {
+        settled = true;
+        yield { kind: 'finish', reason: 'error', code: 'NO_FINISH' };
+        return;
+      }
       const mapped = mapStreamChunk(value);
       if (!mapped) continue;
       if (mapped.kind === 'finish') {
-        if (mapped.reason === 'error') throw new HostChatError('模型返回错误', mapped.code);
+        settled = true;
+        yield mapped.reason === 'error'
+          ? { kind: 'finish', reason: 'error', code: mapped.code || 'UPSTREAM_ERROR' }
+          : { kind: 'finish', reason: mapped.reason };
         return;
       }
       yield mapped;
     }
   } finally {
-    try { await iterator.return?.(); } catch { /* 忽略收尾失败 */ }
+    if (!settled) {
+      try { await Promise.race([Promise.resolve(iterator.return?.()), sleep(ABORT_GRACE_MS)]); } catch { /* 忽略 */ }
+    }
   }
 }

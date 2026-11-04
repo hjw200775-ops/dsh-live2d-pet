@@ -131,10 +131,12 @@ test('渲染器接线：fetch + ReadableStream 解析、停止按钮、500 字�
   assert.match(viewer, /response\.body\?\.getReader\(\)/);
   assert.match(viewer, /chatAbort\?\.abort\(\)/);
   assert.match(viewer, /CHAT_LIMITS\.messageChars/);
-  assert.match(viewer, /模拟模式/);
+  assert.match(viewer, /本地模拟/);
+  assert.match(viewer, /chat-backend/);
+  assert.match(viewer, /realConsent/);
 
   const html = await readFile(path.resolve('renderer/index.html'), 'utf8');
-  for (const id of ['chat-enabled', 'chat-mode', 'chat-input', 'chat-send', 'chat-stop', 'chat-state']) {
+  for (const id of ['chat-enabled', 'chat-mode', 'chat-backend', 'chat-consent', 'chat-input', 'chat-send', 'chat-stop', 'chat-state']) {
     assert.ok(html.includes(`id="${id}"`), `缺少控件 ${id}`);
   }
   assert.match(html, /对话（模拟）/);

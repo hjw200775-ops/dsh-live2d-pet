@@ -14,6 +14,7 @@ export const DEFAULT_CHAT_PREFERENCES = Object.freeze({
   enabled: false,
   mode: 'follow',
   backend: 'simulated',
+  realConsent: false,
   maxTokens: 256,
   historyTurns: 6,
   persona: '',
@@ -35,6 +36,7 @@ export function sanitizeChatPreferences(input, previous = defaultChatPreferences
   if (typeof input.enabled === 'boolean') base.enabled = input.enabled;
   if (CHAT_MODES.includes(input.mode)) base.mode = input.mode;
   if (CHAT_BACKENDS.includes(input.backend)) base.backend = input.backend;
+  if (typeof input.realConsent === 'boolean') base.realConsent = input.realConsent;
   if (Number.isFinite(input.maxTokens)) {
     const value = Math.round(input.maxTokens);
     if (value >= CHAT_LIMITS.maxTokens.min && value <= CHAT_LIMITS.maxTokens.max) base.maxTokens = value;
@@ -49,6 +51,7 @@ export function sanitizeChatPreferences(input, previous = defaultChatPreferences
     enabled: base.enabled,
     mode: base.mode,
     backend: base.backend,
+    realConsent: base.realConsent,
     maxTokens: base.maxTokens,
     historyTurns: base.historyTurns,
     persona: base.persona,

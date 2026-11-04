@@ -2,25 +2,14 @@ import { streamSimulatedReply } from './simulator.mjs';
 import { encodeSseFrame } from './sse.mjs';
 
 /**
- * 把一次对话写成 SSE 响应（调用方已完成鉴权、限额校验与 writeHead）。
+ * 把一次对话写成 SSE 响应（调用方已完成鉴权、限额校验；必要时已写过头）。
  *
- * 统一 host-bridge 与 viewer-server 的帧序列，保证 Electron 拿到的内容
- * 与本地模拟完全同构：
- *   meta -> delta* -> end{reason}        正常
- *   meta -> delta* -> error{code}        超时/空流/上游失败
+ * 帧序列：meta -> delta* -> end{reason} | error{code}
  *
- * @param {object} options
- * @param {import('node:http').ServerResponse} options.res
- * @param {string} options.prompt
- * @param {'pet'|'follow'} [options.mode]
- * @param {AbortSignal} [options.signal]
- * @param {'ok'|'empty'|'error'|'stall'|'hang'} [options.scenario]
- * @param {number} [options.timeoutMs]
- * @param {string} [options.backend] 用于 meta 帧
- * @param {string} [options.model]
- * @param {boolean} [options.degraded] host 不可用时为 true
- * @param {string} [options.degradedReason]
- * @param {() => AsyncIterable<{kind:string,text?:string,reason?:string}>} [options.produce] 自定义上游（适配器）
+ * 成功判定是严格的：
+ * - 只有上游明确给出 finish{reason:'ok'} 才算成功（自定义 produce 由适配器给终止帧）；
+ * - 内置模拟器没有终止帧，按其"正常走完"视为成功；
+ * - 缺少 finish、未知 finish、aborted、空流都不得显示为成功。
  */
 export async function writeChatStream({
   res,
@@ -35,8 +24,6 @@ export async function writeChatStream({
   degradedReason,
   produce,
 }) {
-  const controller = new AbortController();
-  // 调用方可能已经写过 SSE 头（host-bridge / 代理路径），没写就补上，避免响应缺 content-type。
   if (!res.headersSent) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -46,6 +33,8 @@ export async function writeChatStream({
     });
     res.flushHeaders?.();
   }
+
+  const controller = new AbortController();
   const abort = () => { if (!controller.signal.aborted) controller.abort(); };
   const onOuterAbort = () => abort();
   signal?.addEventListener('abort', onOuterAbort, { once: true });
@@ -54,42 +43,102 @@ export async function writeChatStream({
   const timer = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
   const heartbeat = setInterval(() => { write(': keepalive\n\n'); }, 10000);
 
-  const write = frame => {
+  function write(frame) {
     try {
       if (!res.writableEnded) res.write(typeof frame === 'string' ? frame : encodeSseFrame(frame));
     } catch { /* 客户端已断开 */ }
-  };
+  }
 
+  const custom = typeof produce === 'function';
   let emitted = 0;
+  let finish = null;
+
   try {
     write({ event: 'meta', data: { type: 'meta', simulated: backend === 'simulated', backend, model, ...(degraded ? { degraded: true, reason: degradedReason || 'host-unavailable' } : {}) } });
 
-    const upstream = produce
+    const upstream = custom
       ? produce({ signal: controller.signal })
       : plainChunks(streamSimulatedReply({ prompt, mode, signal: controller.signal, scenario }));
 
-    for await (const chunk of upstream) {
-      if (chunk?.kind === 'finish') break;
-      if (chunk?.kind === 'delta' && typeof chunk.text === 'string') {
-        emitted += chunk.text.length;
-        write({ event: 'delta', data: { type: 'delta', text: chunk.text } });
+    const iterator = upstream[Symbol.asyncIterator]();
+    let exhausted = false;
+    try {
+      for (;;) {
+        const step = await nextOrAbort(iterator, controller.signal);
+        if (step.aborted) break;
+        const { done, value } = step.value;
+        if (done) { exhausted = true; break; }
+        if (value?.kind === 'finish') { finish = value; break; }
+        if (value?.kind === 'delta' && typeof value.text === 'string') {
+          emitted += value.text.length;
+          write({ event: 'delta', data: { type: 'delta', text: value.text } });
+        }
+      }
+    } finally {
+      if (!exhausted) {
+        try { await Promise.race([Promise.resolve(iterator.return?.()), delay(200)]); } catch { /* 忽略收尾失败 */ }
       }
     }
 
-    if (timedOut) write({ event: 'error', data: { type: 'error', code: 'timeout' } });
-    else if (controller.signal.aborted) write({ event: 'end', data: { type: 'end', reason: 'aborted' } });
-    else if (emitted === 0) write({ event: 'error', data: { type: 'error', code: 'empty-stream' } });
-    else write({ event: 'end', data: { type: 'end', reason: 'ok', simulated: backend === 'simulated' } });
-    return { emitted, outcome: timedOut ? 'timeout' : controller.signal.aborted ? 'aborted' : emitted === 0 ? 'empty' : 'ok' };
+    return settle({ timedOut, aborted: controller.signal.aborted, custom, finish, emitted, write, simulated: backend === 'simulated' });
   } catch (error) {
-    write({ event: 'error', data: { type: 'error', code: error?.code || 'upstream-error' } });
-    return { emitted, outcome: 'error', code: error?.code || 'upstream-error' };
+    const code = safeCode(error);
+    write({ event: 'error', data: { type: 'error', code } });
+    return { emitted, outcome: 'error', code };
   } finally {
     clearTimeout(timer);
     clearInterval(heartbeat);
     signal?.removeEventListener('abort', onOuterAbort);
     try { if (!res.writableEnded) res.end(); } catch { /* 已断开 */ }
   }
+}
+
+function settle({ timedOut, aborted, custom, finish, emitted, write, simulated }) {
+  if (timedOut) {
+    write({ event: 'error', data: { type: 'error', code: 'timeout' } });
+    return { emitted, outcome: 'timeout' };
+  }
+  if (finish?.reason === 'aborted' || (!finish && aborted)) {
+    write({ event: 'end', data: { type: 'end', reason: 'aborted' } });
+    return { emitted, outcome: 'aborted' };
+  }
+  if (finish?.reason === 'error') {
+    const code = finish.code || 'UPSTREAM_ERROR';
+    write({ event: 'error', data: { type: 'error', code } });
+    return { emitted, outcome: 'error', code };
+  }
+  if (custom && !finish) {
+    write({ event: 'error', data: { type: 'error', code: 'no-finish' } });
+    return { emitted, outcome: 'error', code: 'no-finish' };
+  }
+  if (emitted === 0) {
+    write({ event: 'error', data: { type: 'error', code: 'empty-stream' } });
+    return { emitted, outcome: 'empty' };
+  }
+  write({ event: 'end', data: { type: 'end', reason: 'ok', simulated } });
+  return { emitted, outcome: 'ok' };
+}
+
+/** 只记录白名单形状的错误码，避免把原始 error.message（可能含请求内容）写进日志。 */
+export function safeCode(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  return /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : 'UPSTREAM_ERROR';
+}
+
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+/** 等待 next()，但对取消立即返回，避免上游不理取消时把请求拖死。 */
+function nextOrAbort(iterator, signal) {
+  if (signal?.aborted) return Promise.resolve({ aborted: true });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => { if (!settled) { settled = true; resolve({ aborted: true }); } };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    iterator.next().then(
+      value => { if (!settled) { settled = true; signal?.removeEventListener('abort', onAbort); resolve({ value }); } },
+      error => { if (!settled) { settled = true; signal?.removeEventListener('abort', onAbort); reject(error); } },
+    );
+  });
 }
 
 /** 把纯文本分片适配成 {kind:'delta'} 形状。 */

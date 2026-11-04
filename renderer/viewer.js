@@ -209,6 +209,9 @@ import { createSseParser } from './features/chat/sse.mjs';
     const chatUI={
       enabled:document.getElementById('chat-enabled'),
       mode:document.getElementById('chat-mode'),
+      backend:document.getElementById('chat-backend'),
+      consent:document.getElementById('chat-consent'),
+      warning:document.getElementById('chat-warning'),
       input:document.getElementById('chat-input'),
       send:document.getElementById('chat-send'),
       stop:document.getElementById('chat-stop'),
@@ -219,11 +222,16 @@ import { createSseParser } from './features/chat/sse.mjs';
       if(!chatUI.enabled)return;
       chatUI.enabled.checked=chat.enabled;
       chatUI.mode.value=chat.mode;
+      chatUI.backend.value=chat.backend;
+      chatUI.consent.checked=chat.realConsent===true;
+      chatUI.warning.hidden=chat.backend!=='host';
       const active=chat.enabled;
       chatUI.input.disabled=!active;chatUI.send.disabled=!active;
       chatUI.stop.disabled=!chatAbort;
       setChatState(active
-        ?(chat.mode==='follow'?'模拟模式：跟随示例消息（未接入真实 AI）':'模拟模式：本地假模型回复（未接入真实 AI）')
+        ?(chat.backend==='host'
+          ?(chat.mode==='follow'?'DSH 模型后端（follow 示例消息）':'DSH 模型后端：未获授权时会自动降级为本地模拟')
+          :(chat.mode==='follow'?'本地模拟：跟随示例消息':'本地模拟：本地假模型回复'))
         :'对话未启用；所有回复都是模拟内容');
     };
     const applyChat=patch=>{chat=sanitizeChatPreferences(patch,chat);preferences.chat=chat;paintChat();scheduleSave();};
@@ -282,6 +290,8 @@ import { createSseParser } from './features/chat/sse.mjs';
     if(chatUI.enabled){
       chatUI.enabled.addEventListener('change',()=>{if(!chatUI.enabled.checked)stopChat();applyChat({enabled:chatUI.enabled.checked});});
       chatUI.mode.addEventListener('change',()=>{stopChat();applyChat({mode:chatUI.mode.value});});
+      chatUI.backend.addEventListener('change',()=>{stopChat();applyChat({backend:chatUI.backend.value});});
+      chatUI.consent.addEventListener('change',()=>applyChat({realConsent:chatUI.consent.checked}));
       chatUI.send.addEventListener('click',()=>{void sendChat();});
       chatUI.stop.addEventListener('click',stopChat);
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});

@@ -1,10 +1,12 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CHAT_LIMITS, validateChatMessage } from './config.mjs';
-import { writeChatStream } from './stream.mjs';
-import { realChatEnabled, resolveHostModel, streamHostChat } from './host-adapter.mjs';
+import { safeCode, writeChatStream } from './stream.mjs';
+import { streamHostChat } from './host-adapter.mjs';
+import { authorizeRealChat } from './authorization.mjs';
 
 export const HOST_BRIDGE_FILE = 'host-bridge.json';
 export const HOST_BRIDGE_PROTOCOL = 'dsh-live2d-host-bridge/1';
@@ -58,6 +60,7 @@ export async function startHostBridge({
   const hits = [];
   let busy = false;
   let closing = false;
+  const active = new Set();
   let origin = '';
 
   const server = createServer(async (req, res) => {
@@ -89,8 +92,11 @@ export async function startHostBridge({
       hits.push(at);
       busy = true;
 
-      const mode = body.value?.mode === 'follow' ? 'follow' : 'pet';
+      // 授权只看用户保存的配置（backend/realConsent/mode）与 Host 环境，不看请求正文。
+      const auth = await authorizeRealChat({ configDir, llm, agentDefaultModel });
+      const mode = auth.chat.mode;
       const controller = new AbortController();
+      active.add(controller);
       const onClose = () => { if (!controller.signal.aborted) controller.abort(); };
       req.on('close', onClose);
       res.on('close', onClose);
@@ -98,10 +104,9 @@ export async function startHostBridge({
       try {
         res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
         res.flushHeaders?.();
-        const real = realChatEnabled({ chat: { backend: 'host' } });
-        const model = real.ok ? await resolveHostModel({ llm, agentDefaultModel }) : null;
-        if (real.ok && model && typeof llm?.stream === 'function') {
-          log('[live2d] host chat backend=host-llm');
+        const model = auth.model;
+        if (auth.ok) {
+          log('[live2d] host chat backend=host-llm source=' + (model?.source || 'unknown'));
           await writeChatStream({
             res, prompt: message.text, mode, signal: controller.signal, timeoutMs, scenario,
             backend: 'host-llm', model: `${model.provider}/${model.model}`,
@@ -111,10 +116,12 @@ export async function startHostBridge({
             }),
           });
         } else {
+          log('[live2d] host chat backend=simulated reason=' + (auth.reasons[0] || 'none'));
           await writeChatStream({ res, prompt: message.text, mode, signal: controller.signal, timeoutMs, scenario, backend: 'simulated', model: 'local-simulator' });
         }
       } finally {
         busy = false;
+        active.delete(controller);
         req.off('close', onClose);
         res.off('close', onClose);
       }
@@ -142,6 +149,7 @@ export async function startHostBridge({
   const temporary = `${bridgeFile}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(temporary, JSON.stringify(info, null, 2), { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, bridgeFile);
+  await restrictToCurrentUser(bridgeFile, log);
 
   return {
     info,
@@ -151,8 +159,26 @@ export async function startHostBridge({
       if (closing) return;
       closing = true;
       hits.length = 0;
+      for (const controller of active) { try { controller.abort(); } catch { /* 忽略 */ } }
+      active.clear();
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections?.(); });
       await rm(bridgeFile, { force: true }).catch(() => {});
     },
   };
+}
+
+/** Windows 上尽量把桥接文件收紧到当前用户；失败只记状态码，不记录路径或内容。 */
+async function restrictToCurrentUser(file, log) {
+  if (process.platform !== 'win32') {
+    try { await chmod(file, 0o600); } catch { /* 尽力而为 */ }
+    return;
+  }
+  const user = process.env.USERNAME;
+  if (!user) { log('[live2d] host bridge acl=best-effort'); return; }
+  await new Promise(resolve => {
+    execFile('icacls', [file, '/inheritance:r', '/grant:r', `${user}:F`], { windowsHide: true }, error => {
+      log(error ? '[live2d] host bridge acl=best-effort' : '[live2d] host bridge acl=restricted');
+      resolve();
+    });
+  });
 }

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { startHostBridge } from '../../src/features/chat/host-bridge.mjs';
 import { createSseParser } from '../../src/features/chat/sse.mjs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 
 test('插件不把 llm 设为强制依赖，桥接启动失败也不影响其他功能', async () => {
@@ -29,6 +29,7 @@ test('聊天模块不包含任何真实 API 直连（不新建第二套 DeepSeek
 test('没有 llm 服务时桥接仍可启动并以模拟后端工作', async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-no-llm-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
+  await writeFile(path.join(dir, 'preferences.desktop.json'), JSON.stringify({ version: 1, chat: { enabled: true, mode: 'pet', backend: 'simulated' } }), 'utf8');
   const bridge = await startHostBridge({ configDir: dir }); // 不传 llm
   t.after(() => bridge.close());
   const response = await fetch(`${bridge.url}/chat`, {

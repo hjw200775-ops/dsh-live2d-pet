@@ -82,7 +82,7 @@ export async function apply(ctx, config = {}) {
       log(`[live2d] host bridge 127.0.0.1:${hostBridge.info.port}`);
     }catch(error){
       hostBridge=null;
-      log(`[live2d] host bridge 未启动：${error?.message||error}`);
+      log('[live2d] host bridge 未启动 code=' + (error?.code || error?.name || 'start-failed'));
     }
   }  const activity=createActivity();
   const bridgeFile=local.bridgeFile || path.join(configDir,'desktop-bridge.json');

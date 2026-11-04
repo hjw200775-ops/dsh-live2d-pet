@@ -611,3 +611,68 @@ GUI 20 项复跑通过；`check_release` 通过（117 个已跟踪文件）。
 - 桥接令牌在文件中，依赖用户目录权限；多用户机器需额外评估。
 - Electron 与 Host 的限流各自计数，极端并发下总配额可能翻倍。
 - 真实适配器的取消是否立即停止计费，取决于其实现，接入时必须实测。
+## 23. 第七阶段第二部分：真实调用前的安全修订
+
+本轮仍**没有**真实推理；只修准入、结束语义、日志与权限。
+
+### 23.1 准入：五条件，且不信请求正文
+
+`src/features/chat/authorization.mjs` 在 Host 侧独立判定，读取用户保存的配置
+（`preferences.desktop.json` 优先，其次 `preferences.json`）：
+
+| 条件 | 不满足时 |
+| --- | --- |
+| `chat.backend === 'host'` | `backend-not-host` |
+| `chat.realConsent === true`（用户勾选"允许真实模型调用"） | `no-user-consent` |
+| `chat.mode === 'pet'` | `mode-not-pet` |
+| 环境变量 `DSH_LIVE2D_CHAT_REAL=1` | `env-disabled` |
+| Host 能解析出模型且 `llm.stream` 存在 | `model-unavailable` / `llm-unavailable` |
+
+**请求正文里的 `backend`/`mode` 不再参与授权**：直接请求桥接也无法绕过开关。
+不满足时一律走本地模拟，并在 meta 帧标注 `simulated:true` 与原因码（不写正文）。
+
+### 23.2 结束语义
+
+`streamHostChat()` 现在保证**恰好一个**终止帧：`finish{ok}` / `finish{aborted}` / `finish{error,code}`：
+
+- 有文本后 `aborted` → 输出 `end{reason:'aborted'}`，**绝不显示为成功**；
+- `error` → 透传稳定错误码（未知码归一为 `UPSTREAM_ERROR`）；
+- 迭代器结束但缺 `finish` → `NO_FINISH`；未知 `finish.kind` → `UNKNOWN_FINISH`；
+- 自定义 produce 缺终止帧时，`writeChatStream` 输出 `error{no-finish}`；
+- 取消后不再等待不响应取消的上游：`nextOrAbort` 立即返回，`iterator.return` 最多等 200 ms；
+- 模拟器路径无终止帧，按其正常走完视为 `ok`（`end{simulated:true}`）。
+
+### 23.3 日志与凭据
+
+- 新增 `safeCode()`：只放行 `/^[A-Z][A-Z0-9_]{1,39}$/` 形状的错误码；原始 `error.message`、正文、回复、
+  令牌一律不写日志。Host 桥接日志只包含 `backend=`、`reason=<码>`、`acl=<受限|尽力>`、`code=<码>`。
+- Windows 下写 `host-bridge.json` 后执行 `icacls /inheritance:r /grant:r <用户>:F`；实测输出只有
+  `PC-…\Administrator:(F)`，无 `Everyone` / `BUILTIN\Users`；非 Windows 用 `chmod 0o600`。
+- 令牌每次启动重新生成；`close()` 删除桥接文件，旧令牌立即失效。
+
+### 23.4 DSH 接口核对（离线）
+
+| 项 | 结论 | 依据 |
+| --- | --- | --- |
+| `ctx.get('llm')` | Cordis 容器取值，服务缺失返回 undefined；插件不再把 llm 写进 `inject` | `src/index.js` + 假 llm 注入测试 |
+| `agentDefaultModel` | `get()` 同步 / `resolve()` 异步两种都支持，失败退回 `listProviders/listModels` | `host-adapter` 7 项测试 |
+| `finish.reason.kind` | 合法值 `ok` / `aborted` / `error`；其它值按 `UNKNOWN_FINISH` 失败处理 | 映射测试 |
+| 模型不可用 | 降级模拟，不抛错、不影响动画 | `model-unavailable` 测试 |
+| 热重载/移除文件 | 下一次请求重新读 `host-bridge.json`，缺失即降级 | 代理测试 |
+| 卸载清理 | 关闭 server、abort 在途流、删文件、清定时器 | `close()` 测试 + 插件源码断言 |
+
+### 23.5 测试与验收
+
+`npm test`：**238 / 238 通过**（本轮新增 22 项：准入 4、结束语义 9、桥接绕过/日志 5、其他适配）。
+`check_release` 通过（124 个已跟踪文件）；GUI 20 项复跑通过；ACL 手工核验通过。
+
+### 23.6 真实模型首次调用的最终准入检查表
+
+- [ ] 用户勾选「允许真实模型调用（可能产生费用）」并保存（`realConsent: true`）
+- [ ] `chat.backend = 'host'` 且 `chat.mode = 'pet'`
+- [ ] Host 环境变量 `DSH_LIVE2D_CHAT_REAL=1`
+- [ ] `agentDefaultModel` 解析成功、`llm.stream` 可调用（真实 Host 上验证）
+- [ ] GUI 状态行显示「DSH 模型」，且不是「已降级」
+- [ ] 首笔调用后核对额度消耗与取消行为
+- [ ] 关闭 `DSH_LIVE2D_CHAT_REAL` 或删除 `host-bridge.json` 能立即回到模拟
+- [ ] 确认 DSH 侧日志不含正文与密钥

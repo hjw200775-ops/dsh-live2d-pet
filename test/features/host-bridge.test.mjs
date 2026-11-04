@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { HOST_BRIDGE_FILE, HOST_BRIDGE_LIMITS, HOST_BRIDGE_PROTOCOL, readHostBridgeInfo, startHostBridge } from '../../src/features/chat/host-bridge.mjs';
@@ -10,6 +10,7 @@ async function startBridge(t, options = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-host-bridge-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const logs = [];
+  await writeFile(path.join(dir, 'preferences.desktop.json'), JSON.stringify({ version: 1, chat: options.chat || { enabled: true, mode: 'pet', backend: 'simulated' } }), 'utf8');
   const bridge = await startHostBridge({ configDir: dir, log: line => logs.push(line), ...options });
   t.after(() => bridge.close());
   return { dir, bridge, logs, file: path.join(dir, HOST_BRIDGE_FILE) };
@@ -126,4 +127,93 @@ test('日志不含正文与令牌', async t => {
   const joined = logs.join('\n');
   assert.equal(joined.includes('这是一段不该出现在日志里的正文'), false);
   assert.equal(joined.includes(bridge.info.token), false);
+});
+
+const fakeModel = { get: () => ({ provider: 'fake-provider', model: 'fake-model' }) };
+const fakeLlm = { stream: () => (async function* () { yield { type: 'text-delta', text: '假模型' }; yield { type: 'finish', reason: { kind: 'ok' } }; })() };
+
+test('请求正文不能绕过真实调用开关：正文声明 backend=host 也仍是模拟', async t => {
+  const { bridge } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'simulated', realConsent: true },
+    llm: fakeLlm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: '绕过尝试', backend: 'host', mode: 'pet' })).text());
+    assert.equal(frames[0].data.backend, 'simulated');
+    assert.equal(frames[0].data.simulated, true);
+    assert.equal(frames.some(f => f.data.backend === 'host-llm'), false);
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('用户显式选择 + 授权 + 环境变量 + 模型可用时，才切到 host-llm', async t => {
+  const { bridge } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'host', realConsent: true },
+    llm: fakeLlm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: '走假模型' })).text());
+    assert.equal(frames[0].data.backend, 'host-llm');
+    assert.equal(frames[0].data.simulated, false);
+    assert.ok(frames.filter(f => f.data.type === 'delta').map(f => f.data.text).join('').includes('假模型'));
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('缺少用户同意（realConsent=false）时即使其它条件齐全也不调用模型', async t => {
+  const { bridge } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'host', realConsent: false },
+    llm: fakeLlm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: '没有同意' })).text());
+    assert.equal(frames[0].data.backend, 'simulated');
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('模式不是 pet 时不允许真实调用', async t => {
+  const { bridge } = await startBridge(t, {
+    chat: { enabled: true, mode: 'follow', backend: 'host', realConsent: true },
+    llm: fakeLlm,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: 'follow 模式' })).text());
+    assert.equal(frames[0].data.backend, 'simulated');
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
+test('上游错误只暴露稳定错误码，日志不含原始 message 与正文', async t => {
+  const secret = '这是不该出现在日志里的正文';
+  const failing = { stream: () => (async function* () { const error = new Error('raw failure ' + secret); error.code = 'AUTH'; throw error; })() };
+  const { bridge, logs } = await startBridge(t, {
+    chat: { enabled: true, mode: 'pet', backend: 'host', realConsent: true },
+    llm: failing,
+    agentDefaultModel: fakeModel,
+  });
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  try {
+    const frames = parse(await (await post(bridge, { text: secret })).text());
+    const error = frames.find(f => f.data.type === 'error');
+    assert.ok(['AUTH', 'UPSTREAM_ERROR'].includes(error?.data.code), JSON.stringify(frames));
+    const joined = logs.join('\n');
+    assert.equal(joined.includes(secret), false);
+    assert.equal(joined.includes('raw failure'), false);
+    assert.equal(joined.includes(bridge.info.token), false);
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
 });
