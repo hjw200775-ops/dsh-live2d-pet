@@ -235,14 +235,19 @@ import { createSseParser } from './features/chat/sse.mjs';
       if([...text].length>CHAT_LIMITS.messageChars){setChatState(`最多 ${CHAT_LIMITS.messageChars} 个字`,true);return;}
       const controller=new AbortController();
       chatAbort=controller;
-      let full='',deltas=0,ended=false,failure='';
+      let full='',deltas=0,ended=false,failure='',backend='simulated',degraded=false;
       const timeoutTimer=setTimeout(()=>{failure='timeout';controller.abort();},35000);
       chatUI.stop.disabled=false;chatUI.send.disabled=true;
       setChatState('模拟生成中…');
       showChatBubble('…',true);
       const parser=createSseParser({onFrame:({data})=>{
         let payload;try{payload=JSON.parse(data);}catch{return;}
-        if(payload?.type==='meta'){if(payload.simulated!==true)failure='unexpected-model';return;}
+        if(payload?.type==='meta'){
+          backend=payload.backend||'simulated';degraded=payload.degraded===true;
+          if(payload.simulated!==true)failure='unexpected-model';
+          setChatState(degraded?'DSH 模型不可用，已降级为本地模拟':(backend==='host-llm'?'DSH 模型（本轮为模拟链路）':'本地模拟'));
+          return;
+        }
         if(payload?.type==='delta'&&typeof payload.text==='string'){full+=payload.text;deltas++;showChatBubble(full,true);return;}
         if(payload?.type==='end'){
           if(payload.reason==='ok')ended=true;
@@ -264,7 +269,7 @@ import { createSseParser } from './features/chat/sse.mjs';
         else if(failure)setChatState(failure==='timeout'?'超时了，已停止':`生成失败：${failure}`,true);
         else if(!deltas)setChatState('没有收到内容（空流）',true);
         else if(!ended)setChatState('流意外结束（缺少结束事件）',true);
-        else setChatState('回复完成（模拟）');
+        else setChatState(`回复完成（${degraded?'已降级为本地模拟':backend==='host-llm'?'DSH 模型':'本地模拟'}）`);
       }catch(error){
         if(controller.signal.aborted&&failure!=='timeout')setChatState('已停止生成');
         else setChatState(failure==='timeout'?'超时了，已停止':`发送失败：${error.message}`,true);
@@ -280,7 +285,7 @@ import { createSseParser } from './features/chat/sse.mjs';
       chatUI.send.addEventListener('click',()=>{void sendChat();});
       chatUI.stop.addEventListener('click',stopChat);
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});
-      window.__dshChat=()=>({enabled:chat.enabled,mode:chat.mode,busy:!!chatAbort,config:{...chat}});
+      window.__dshChat=()=>({enabled:chat.enabled,mode:chat.mode,busy:!!chatAbort,backend,degraded,config:{...chat}});
       paintChat();
     }    if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
     paintPressed();

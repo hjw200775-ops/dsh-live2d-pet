@@ -542,3 +542,72 @@ follow 模式的真实接入约束（未来）：用户主动开启才订阅指�
 - 限流是进程内滑动窗口，多 profile 并发时各自计数；真实接入时若需全局配额，要换成共享存储或宿主侧配额。
 - 超时只覆盖"上游长时间不产出"，不覆盖"上游持续慢速产出"（目前 30 秒总时长会截断，但没有 idle 超时）。
 - 取消是"协作式"的：仿真器会立刻响应 abort，真实适配器是否立即停止计费取决于其实现，接入时需再验证。
+## 22. 第七阶段：Host ↔ Electron 桥接与模拟适配器
+
+设计稿见 [HOST-BRIDGE.md](HOST-BRIDGE.md)（先于实现单独提交）。本轮只完成桥接与**模拟**适配器，
+没有发起任何真实推理请求。
+
+### 22.1 拓扑
+
+```
+DSH Host（src/index.js）
+  ├─ activity / bridge publisher ──POST──▶ desktop-bridge.json（既有协议，未改）
+  └─ host-bridge server 127.0.0.1:<随机端口>
+        ▲ Authorization: Bearer <每次启动随机的 token>
+        │ 文件：<configDir>/host-bridge.json（退出即删）
+        │
+Electron（desktop/main.mjs + src/viewer-server.js）
+  └─ /chat（同源 + token 路径）→ 若 chat.backend=host 则转发 Host，失败降级本地模拟
+        ▲
+渲染器（fetch + ReadableStream）
+```
+
+### 22.2 关键约定
+
+| 项 | 实现 |
+| --- | --- |
+| 绑定 | 只用 `127.0.0.1` + 临时端口；不监听 `0.0.0.0` |
+| 认证 | `randomBytes(32)` 每次启动重新生成；只写在 `host-bridge.json`，不进日志、不进渲染器 |
+| 兼容 | `desktop-bridge.json` 字段与语义完全不变；新增能力全部走新文件与新路由 |
+| 限额 | 8 KiB 请求体、500 字、并发 1、每分钟 6 次、30 秒超时，全部在 Host 与 Electron 两侧各自强制 |
+| 降级 | Host 缺失 → `meta{degraded:true}` + 本地模拟；Host 中途退出 → `error{host-lost}`，UI 明确提示 |
+| 清理 | 插件卸载关闭 server、删文件、释放监听与定时器；Electron 关闭时取消在途请求 |
+| 非强制依赖 | `inject` 仍只有 `webServer`、`credentials`；桥接启动失败仅记日志 |
+
+### 22.3 修改文件
+
+| 文件 | 说明 |
+| --- | --- |
+| `docs/HOST-BRIDGE.md` | 协议设计（先提交） |
+| `src/features/chat/stream.mjs` | 统一 SSE 写出：meta→delta→end/error、超时、心跳、取消、降级标记 |
+| `src/features/chat/host-adapter.mjs` | 模型解析（agentDefaultModel → listProviders/listModels）、StreamChunk 映射、具名错误、真实调用准入 |
+| `src/features/chat/host-bridge.mjs` | Host 侧 HTTP server：认证、来源、限额、限流、并发、桥接文件生命周期 |
+| `src/features/chat/config.mjs` | 新增 `backend: 'simulated' \| 'host'`（默认 simulated） |
+| `src/index.js` | 启动/关闭桥接；失败不影响其它功能 |
+| `src/viewer-server.js` | backend=host 时转发；失败降级；统一使用 stream 模块 |
+| `renderer/viewer.js` | 展示后端（本地模拟 / DSH 模型）与降级提示 |
+| 测试 | `host-adapter` 7 项、`host-bridge` 9 项、`host-chat-proxy` 6 项、`host-plugin` 3 项 |
+
+### 22.4 测试
+
+`npm test`：**216 / 216 通过**（第七阶段新增 25 项）。覆盖：桥接认证成功/失败、正常 SSE、
+跨块解析（沿用）、Host 不在线降级、Host 中途退出、取消、超时/空流/错误、并发与限流、
+卸载清理、模型服务缺失仍可启动、follow/pet 隔离、正文与令牌不入日志。
+GUI 20 项复跑通过；`check_release` 通过（117 个已跟踪文件）。
+
+### 22.5 首次启用真实 LLM 还需要什么
+
+1. **人工审批**：明确同意"桌宠对话会消耗模型额度"。
+2. **开关置位**：`chat.backend='host'` + `DSH_LIVE2D_CHAT_REAL=1`，两者缺一不可。
+3. **模型解析验证**：在真实 Host 上确认 `agentDefaultModel` 能给出 provider/model，且 `llm.stream` 可用。
+4. **费用控制复核**：6 次/分钟、并发 1、30 秒超时、无自动重试；先做一笔最小调用观察计费。
+5. **错误面复核**：AUTH / RATE_LIMIT / NO_ADAPTER / 取消 的真实错误码与文案。
+6. **隐私复核**：确认真实适配器不会把正文写进 DSH 日志；本插件侧已保证不落盘。
+7. **回退演练**：`DSH_LIVE2D_CHAT_REAL` 关闭后应立刻回到模拟；`host-bridge.json` 删除等效于 Host 离线。
+
+### 22.6 遗留风险
+
+- follow 模式目前仍是模拟消息，真实会话订阅与"用户显式选择会话"未实现。
+- 桥接令牌在文件中，依赖用户目录权限；多用户机器需额外评估。
+- Electron 与 Host 的限流各自计数，极端并发下总配额可能翻倍。
+- 真实适配器的取消是否立即停止计费，取决于其实现，接入时必须实测。

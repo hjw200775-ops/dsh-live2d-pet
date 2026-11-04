@@ -1,5 +1,6 @@
 /** 桌宠对话的配置：默认关闭、默认跟随模式；本轮全部是本地模拟，不接真实模型。 */
 export const CHAT_MODES = Object.freeze(['follow', 'pet']);
+export const CHAT_BACKENDS = Object.freeze(['simulated', 'host']);
 
 export const CHAT_LIMITS = Object.freeze({
   messageChars: 500,
@@ -12,6 +13,7 @@ export const CHAT_LIMITS = Object.freeze({
 export const DEFAULT_CHAT_PREFERENCES = Object.freeze({
   enabled: false,
   mode: 'follow',
+  backend: 'simulated',
   maxTokens: 256,
   historyTurns: 6,
   persona: '',
@@ -32,6 +34,7 @@ export function sanitizeChatPreferences(input, previous = defaultChatPreferences
 
   if (typeof input.enabled === 'boolean') base.enabled = input.enabled;
   if (CHAT_MODES.includes(input.mode)) base.mode = input.mode;
+  if (CHAT_BACKENDS.includes(input.backend)) base.backend = input.backend;
   if (Number.isFinite(input.maxTokens)) {
     const value = Math.round(input.maxTokens);
     if (value >= CHAT_LIMITS.maxTokens.min && value <= CHAT_LIMITS.maxTokens.max) base.maxTokens = value;
@@ -45,6 +48,7 @@ export function sanitizeChatPreferences(input, previous = defaultChatPreferences
   return {
     enabled: base.enabled,
     mode: base.mode,
+    backend: base.backend,
     maxTokens: base.maxTokens,
     historyTurns: base.historyTurns,
     persona: base.persona,

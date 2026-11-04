@@ -9,6 +9,7 @@ import { startBridgePublisher } from './bridge.mjs';
 import { createFileLogger } from './log-file.mjs';
 import { launchDesktopPet, prepareAssets } from './provision.mjs';
 import { resolvePreferencesFile } from './features/preferences-store.mjs';
+import { startHostBridge } from './features/chat/host-bridge.mjs';
 
 export const name = 'deepseek-live2d';
 export const inject = ['webServer', 'credentials'];
@@ -70,7 +71,20 @@ export async function apply(ctx, config = {}) {
   const assets = await prepareAssets({ pluginRoot, configDir, local, config, log });
   if (assets.fetched) ({ configDir, configFile, local } = await resolveModelConfig(config));
 
-  const activity=createActivity();
+  // Host 侧聊天桥接（可选）：只监听 127.0.0.1，令牌每次启动换新。
+  // 任何失败都只记日志，不影响动画、装扮、跟随与点击反馈。
+  let hostBridge=null;
+  if(process.env.DSH_LIVE2D_HOST_BRIDGE!=='0'){
+    try{
+      const llm=typeof ctx.get==='function'?ctx.get('llm'):undefined;
+      const agentDefaultModel=typeof ctx.get==='function'?ctx.get('agentDefaultModel'):undefined;
+      hostBridge=await startHostBridge({configDir,llm,agentDefaultModel,log});
+      log(`[live2d] host bridge 127.0.0.1:${hostBridge.info.port}`);
+    }catch(error){
+      hostBridge=null;
+      log(`[live2d] host bridge 未启动：${error?.message||error}`);
+    }
+  }  const activity=createActivity();
   const bridgeFile=local.bridgeFile || path.join(configDir,'desktop-bridge.json');
   const balance=createBalance({
     lowBalance:Number(config.lowBalance??local.lowBalance??1)||1,
@@ -100,5 +114,5 @@ export async function apply(ctx, config = {}) {
       res.end(req.method === 'HEAD' ? undefined : JSON.stringify(payload));
     } });
   } catch (e) { unsubs.forEach(fn=>fn());stopBridge();activity.dispose();if(viewer)await viewer.close(); throw e; }
-  ctx.effect(() => () => { clearInterval(balanceTimer);unregister();unsubs.forEach(fn=>fn());stopBridge();activity.dispose();return viewer?.close(); });
+  ctx.effect(() => () => { clearInterval(balanceTimer);unregister();unsubs.forEach(fn=>fn());stopBridge();activity.dispose();return Promise.all([viewer?.close?.(),hostBridge?.close?.()]); });
 }

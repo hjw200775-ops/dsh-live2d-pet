@@ -9,8 +9,9 @@ import { authoredMotion } from './runtime/authored-motions.mjs';
 import {createPreferences} from './preferences.js';
 import {createActivity} from './activity.js';
 import { sanitizeChatPreferences, validateChatMessage, CHAT_LIMITS } from './features/chat/config.mjs';
-import { streamSimulatedReply } from './features/chat/simulator.mjs';
 import { encodeSseFrame } from './features/chat/sse.mjs';
+import { writeChatStream } from './features/chat/stream.mjs';
+import { HOST_BRIDGE_FILE, readHostBridgeInfo } from './features/chat/host-bridge.mjs';
 
 const require = createRequire(import.meta.url);
 const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
@@ -61,6 +62,51 @@ async function readJsonBody(req, limit) {
 
 const mime = name => name.endsWith('.json') ? 'application/json; charset=utf-8' : name.endsWith('.png') ? 'image/png' : name.endsWith('.js') || name.endsWith('.mjs') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream';
 
+/** 读取 Host 写的桥接信息；文件缺失、格式不对或进程已退出都当作"Host 不在线"。 */
+async function loadHostBridge(configDir) {
+  if (!configDir) return null;
+  try {
+    const raw = await readFile(path.join(configDir, HOST_BRIDGE_FILE), 'utf8');
+    const info = readHostBridgeInfo(raw);
+    if (!info) return null;
+    try { process.kill(info.pid, 0); } catch (error) { if (error?.code !== 'EPERM') return null; }
+    return info;
+  } catch { return null; }
+}
+
+/** 把渲染器的 /chat 转发到 Host 桥接；返回 false 表示"还没写出任何帧，可以降级"。 */
+async function proxyHostChat({ res, host, text, mode, signal, timeoutMs }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const link = () => controller.abort();
+  if (signal) { if (signal.aborted) controller.abort(); else signal.addEventListener('abort', link, { once: true }); }
+  try {
+    const response = await fetch(`${host.url}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${host.token}` },
+      body: JSON.stringify({ text, mode }),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) return false;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders?.();
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!res.writableEnded) res.write(Buffer.from(value));
+      }
+    } catch {
+      if (!signal?.aborted) {
+        try { if (!res.writableEnded) res.write(encodeSseFrame({ event: 'error', data: { type: 'error', code: 'host-lost' } })); } catch { /* 已断开 */ }
+      }
+    }
+    try { if (!res.writableEnded) res.end(); } catch { /* 已断开 */ }
+    return true;
+  } catch { return false; }
+  finally { clearTimeout(timer); signal?.removeEventListener('abort', link); }
+}
 export async function startViewer(config) {
   const ownsActivity=!config.activity;if(ownsActivity)config.activity=createActivity();
   const token = randomBytes(24).toString('hex');
@@ -147,7 +193,8 @@ export async function startViewer(config) {
         else telemetry={mode:['idle','thinking','answering','error'].includes(input.mode)?input.mode:'idle',frames:Number(input.frames)||0,zoom:Number(input.zoom)||1,x:Number(input.x)||0,y:Number(input.y)||0,expression:String(input.expression||'').slice(0,40),motion:String(input.motion||'').slice(0,40),at:Date.now()};
         res.writeHead(204).end();return;
       }
-      // 模拟对话：POST + SSE。本轮不接任何真实模型，所有文本来自本地仿真器。
+      // 对话：POST + SSE。backend=simulated 走本地仿真；backend=host 先转发 Host 桥接，
+      // 失败则降级为本地模拟并在 meta 帧里标记 degraded（不影响动画与互动）。
       if(req.method==='POST' && key==='chat') {
         if(req.headers.origin!==origin){res.writeHead(403).end();return;}
         const body=await readJsonBody(req,REQUEST_LIMITS.chat);
@@ -158,7 +205,6 @@ export async function startViewer(config) {
         const message=validateChatMessage(body.value?.text);
         if(!message.ok){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:message.code,limit:CHAT_LIMITS.messageChars}));return;}
         if(chatBusy){res.writeHead(429,{'Content-Type':'application/json; charset=utf-8','Retry-After':'2'}).end(JSON.stringify({error:'chat-busy'}));return;}
-        // 每分钟最多 CHAT_RATE_LIMIT 次（默认 6）：为将来接真实计费模型预留，本轮也是这套规则。
         const limits=chatLimits();
         const now=Date.now();
         while(chatHits.length && now-chatHits[0]>limits.rateWindowMs) chatHits.shift();
@@ -170,35 +216,31 @@ export async function startViewer(config) {
         chatHits.push(now);
         chatBusy=true;
         const controller=new AbortController();
-        let timer=null,heartbeat=null;
-        const release=()=>{chatBusy=false;if(timer)clearTimeout(timer);if(heartbeat)clearInterval(heartbeat);req.off('close',onClose);res.off('close',onClose);};
         const onClose=()=>{if(!controller.signal.aborted)controller.abort();};
-        const send=frame=>{try{if(!res.writableEnded)res.write(encodeSseFrame(frame));}catch{/* 客户端已断开 */}};
+        req.on('close',onClose);res.on('close',onClose);
         try {
-          res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
-          res.flushHeaders?.();
-          req.on('close',onClose);res.on('close',onClose);
-          let timedOut=false;
-          timer=setTimeout(()=>{timedOut=true;controller.abort();},limits.timeoutMs);
-          heartbeat=setInterval(()=>{try{if(!res.writableEnded)res.write(': keepalive\n\n');}catch{/* ignore */}},10000);
-          send({event:'meta',data:{type:'meta',simulated:true,mode:chat.mode,model:'local-simulator'}});
-          let emitted=0;
-          for await (const chunk of streamSimulatedReply({prompt:message.text,mode:chat.mode,signal:controller.signal,scenario:limits.scenario})) {
-            emitted+=chunk.length;
-            send({event:'delta',data:{type:'delta',text:chunk}});
+          let proxied=false;
+          if(chat.backend==='host'){
+            const host=await loadHostBridge(config.configDir);
+            if(host) proxied=await proxyHostChat({res,host,text:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs});
           }
-          if(timedOut) send({event:'error',data:{type:'error',code:'timeout'}});
-          else if(controller.signal.aborted) send({event:'end',data:{type:'end',reason:'aborted'}});
-          else if(emitted===0) send({event:'error',data:{type:'error',code:'empty-stream'}});
-          else send({event:'end',data:{type:'end',reason:'ok',simulated:true}});
+          if(!proxied){
+            await writeChatStream({
+              res,prompt:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs,
+              backend:'simulated',model:'local-simulator',scenario:chat.backend==='host'?'ok':limits.scenario,
+              degraded:chat.backend==='host',degradedReason:'host-unavailable',
+            });
+          }
         } catch(error) {
-          send({event:'error',data:{type:'error',code:error?.code||'upstream-error'}});
+          try{if(!res.writableEnded)res.write(encodeSseFrame({event:'error',data:{type:'error',code:error?.code||'upstream-error'}}));}catch{/* 已断开 */}
         } finally {
-          release();
+          chatBusy=false;
+          req.off('close',onClose);res.off('close',onClose);
           try{if(!res.writableEnded)res.end();}catch{/* 已断开 */}
         }
         return;
-      }      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
+      }
+      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Cache-Control', 'no-store');
