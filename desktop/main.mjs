@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { startViewer } from '../src/viewer-server.js';
 import { createDesktopLink } from '../src/activity.js';
 import { createFileLogger } from '../src/log-file.mjs';
+import { resolvePreferencesFile, migrateLegacyPreferences, OVERLAY_PREFERENCES_FILE } from '../src/features/preferences-store.mjs';
 import { dragCursorOrigin, movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { loadDesktopPreferences, placeBounds, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
 import { rendererRecovery, wakeWindow, acceptPetIpc } from '../src/desktop/session.mjs';
@@ -268,13 +269,24 @@ app.whenReady().then(async () => {
   const config = await loadConfig(configPath);
   const link = createDesktopLink();
   desktopLink = link;
-  // 渲染器的偏好（缩放、浮层位置、互动设置）必须落盘，否则重启后设置会丢；
-  // 桌面窗口自己的窗口/装扮偏好仍走 userData 下的 desktop-preferences.json，两者不是同一份。
+  // 存档按运行模式分开：overlay 用 preferences.json，桌面窗口用 preferences.desktop.json，
+  // 两个进程各自整份回写时不会互相覆盖。首次运行从旧文件安全复制，旧文件只读不删。
+  const viewerPreferencesFile = resolvePreferencesFile({
+    mode: 'desktop',
+    configDir,
+    override: process.env.DSH_LIVE2D_PREFERENCES_FILE,
+  });
+  const migration = await migrateLegacyPreferences({
+    legacyFile: path.join(configDir, OVERLAY_PREFERENCES_FILE),
+    targetFile: viewerPreferencesFile,
+  }).catch(error => ({ migrated: false, reason: 'threw:' + (error?.message || error) }));
+  if (migration.migrated) log(`PREFS_MIGRATED ${migration.reason} -> ${viewerPreferencesFile}`);
+  else log(`PREFS_${String(migration.reason).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`);
   viewer = await startViewer({
     modelFile: config.modelFile,
     coreFile: config.coreFile,
     configDir,
-    preferencesFile: path.join(configDir, 'preferences.json'),
+    preferencesFile: viewerPreferencesFile,
     activity: link,
     bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json'),
   });
