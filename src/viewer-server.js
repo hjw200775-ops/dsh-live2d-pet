@@ -23,6 +23,8 @@ const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
  * - telemetry 与 bridge 只是状态心跳，保持 2 KiB 的紧边界。
  */
 export const REQUEST_LIMITS = Object.freeze({ preferences: 16 * 1024, telemetry: 2048, bridge: 2048, chat: 8 * 1024 });
+/** Follow 长连接：没有总时长上限，只有空闲阈值（Host 每 10 秒有 keepalive）。 */
+const followIdleMs = () => (Number(process.env.DSH_LIVE2D_FOLLOW_IDLE_MS) > 0 ? Number(process.env.DSH_LIVE2D_FOLLOW_IDLE_MS) : 45000);
 
 /** 对话相关上限按请求读取，测试可以在同一进程内用环境变量覆盖，生产默认不变。 */
 function chatLimits() {
@@ -75,9 +77,15 @@ async function loadHostBridge(configDir) {
 }
 
 /** 通用 Host 流式转发：成功返回 true（已写帧），失败返回 false（未写帧）。 */
-async function proxyHostStream({ res, host, path, body, signal, timeoutMs }) {
+async function proxyHostStream({ res, host, path, body, signal, timeoutMs, idleTimeoutMs }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer = null;
+  const arm = () => {
+    if (!idleTimeoutMs) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), idleTimeoutMs);
+  };
+  if (timeoutMs) timer = setTimeout(() => controller.abort(), timeoutMs);
   const link = () => controller.abort();
   if (signal) { if (signal.aborted) controller.abort(); else signal.addEventListener('abort', link, { once: true }); }
   try {
@@ -95,11 +103,13 @@ async function proxyHostStream({ res, host, path, body, signal, timeoutMs }) {
     if (!response.body) return false;
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders?.();
+    arm();
     const reader = response.body.getReader();
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        arm();
         if (!res.writableEnded) res.write(Buffer.from(value));
       }
     } catch { /* 上游中断交由 finally 结束 */ }
@@ -255,7 +265,8 @@ export async function startViewer(config) {
         const onClose = () => { if (!controller.signal.aborted) controller.abort(); };
         req.on('close', onClose); res.on('close', onClose);
         try {
-          const proxied = await proxyHostStream({ res, host, path: '/follow', body: JSON.stringify({ sessionId: body.value?.sessionId }), signal: controller.signal, timeoutMs: 60000 });
+          // Follow 是长连接：没有总时长上限，只做空闲检测（Host 每 10s 有 keepalive）。
+          const proxied = await proxyHostStream({ res, host, path: '/follow', body: JSON.stringify({ sessionId: body.value?.sessionId }), signal: controller.signal, idleTimeoutMs: followIdleMs() });
           if (!proxied) { res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' })); }
         } finally {
           req.off('close', onClose); res.off('close', onClose);

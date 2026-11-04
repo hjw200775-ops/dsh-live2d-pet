@@ -47,12 +47,12 @@ import { createSseParser } from './features/chat/sse.mjs';
     clearTimeout(saveTimer);preferences.model={zoom,x,y};
     return fetch('preferences.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(preferences),keepalive:true})
       .then(async r=>{
-        if(r.ok){paintSaveState(true,'设置已保存');return;}
+        if(r.ok){paintSaveState(true,'设置已保存');return true;}
         let detail='';
         try{const body=await r.json();if(body?.error==='payload-too-large')detail=`（超过 ${Math.round(Number(body.limit||0)/1024)} KB 上限）`;}catch{/* 错误体不是 JSON 时忽略 */ }
         throw new Error(r.status===413?`设置太大，没有保存成功${detail}`:`设置没有保存成功（HTTP ${r.status}）${detail}`);
       })
-      .catch(e=>{paintSaveState(false,`未保存：${e.message}`);if(!disposed){status.hidden=false;status.textContent=e.message;}});
+      .catch(e=>{paintSaveState(false,`未保存：${e.message}`);if(!disposed){status.hidden=false;status.textContent=e.message;}return false;});
   };
   const scheduleSave=()=>{clearTimeout(saveTimer);saveTimer=setTimeout(persist,150);};
   on(window,'message',e=>{
@@ -298,20 +298,28 @@ import { createSseParser } from './features/chat/sse.mjs';
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});
       window.__dshChat=()=>({enabled:chat.enabled,mode:chat.mode,busy:!!chatAbort,backend,degraded,config:{...chat}});
       paintChat();
-    }    // —— 跟随开发会话（只读）：必须由用户手动选会话；只展示助手最终可见文本 ——
+    }    // —— 跟随开发会话（只读）：用户显式选择、先保存后订阅、断线有限重连 ——
     const followUI={
       enabled:document.getElementById('follow-enabled'),
       session:document.getElementById('follow-session'),
       stop:document.getElementById('follow-stop'),
       hide:document.getElementById('follow-hide'),
+      persistent:document.getElementById('follow-persistent'),
       state:document.getElementById('follow-state'),
     };
     let followAbort=null;
+    let followGeneration=0;
+    let followRetryTimer=0;
+    let followRetries=0;
+    let followUserStopped=false;
     const followSeen=new Set();
+    const FOLLOW_MAX_RETRIES=5;
+    const followBackoff=attempt=>Math.min(15000,1000*2**Math.max(0,attempt));
     const setFollowState=(text,isError=false)=>{if(!followUI.state)return;followUI.state.textContent=text;followUI.state.classList.toggle('error',isError);};
     const paintFollowPanel=()=>{
       if(!followUI.enabled)return;
       followUI.enabled.checked=follow.enabled;
+      followUI.persistent.checked=follow.hideContent===true;
       followUI.stop.disabled=!followAbort;
       if(followUI.session.value!==follow.sessionId){
         const option=[...followUI.session.options].find(o=>o.value===follow.sessionId);
@@ -319,8 +327,11 @@ import { createSseParser } from './features/chat/sse.mjs';
       }
       setFollowState(follow.enabled?(followAbort?'正在跟随所选会话（只读）':(follow.sessionId?'准备跟随…':'已启用，请选择目标会话')):'未启用：不会读取任何会话');
     };
-    const applyFollow=patch=>{follow=sanitizeFollowPreferences(patch,follow);preferences.follow=follow;paintFollowPanel();scheduleSave();};
-    const stopFollow=()=>{followAbort?.abort();followAbort=null;followSeen.clear();paintFollowPanel();setFollowState('已停止跟随');};
+    // 返回保存是否成功：只有成功才允许启动订阅。
+    const applyFollow=patch=>{follow=sanitizeFollowPreferences(patch,follow);preferences.follow=follow;paintFollowPanel();return persist();};
+    const clearFollowRetry=()=>{clearTimeout(followRetryTimer);followRetryTimer=0;};
+    // 用户主动停止：代际 +1，任何旧请求与重连都被作废。
+    const stopFollow=()=>{followUserStopped=true;clearFollowRetry();followGeneration++;followAbort?.abort();followAbort=null;followSeen.clear();paintFollowPanel();setFollowState('已停止跟随');};
     const loadFollowSessions=async()=>{
       try{
         const response=await fetch('follow/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -330,58 +341,82 @@ import { createSseParser } from './features/chat/sse.mjs';
         followUI.session.replaceChildren();
         const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=list.length?'— 请选择会话 —':'— 没有可用会话 —';followUI.session.append(placeholder);
         for(const item of list){const option=document.createElement('option');option.value=item.id;option.textContent=item.title||item.id;followUI.session.append(option);}
-        if(follow.sessionId&&!list.some(item=>item.id===follow.sessionId)){applyFollow({enabled:false,sessionId:''});setFollowState('原会话已不可用，请重新选择',true);}
+        if(follow.sessionId&&!list.some(item=>item.id===follow.sessionId)){await applyFollow({enabled:false,sessionId:''});setFollowState('原会话已不可用，请重新选择',true);}
       }catch{
         setFollowState('DSH Host 不可用，无法列出会话；桌宠其它功能不受影响',true);
       }
     };
-    const startFollow=async()=>{
+    const startFollow=async({auto=false}={})=>{
       if(!follow.enabled||!follow.sessionId){setFollowState('请先启用并选择一个会话',true);return;}
+      const generation=++followGeneration;
+      clearFollowRetry();
       followAbort?.abort();
       const controller=new AbortController();
       followAbort=controller;followSeen.clear();
+      if(!auto){followRetries=0;followUserStopped=false;}
       paintFollowPanel();
       try{
         const response=await fetch('follow',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:follow.sessionId}),signal:controller.signal});
+        if(generation!==followGeneration)return;
         if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.error||`HTTP ${response.status}`);}
         const reader=response.body?.getReader();if(!reader)throw new Error('no-stream');
         const decoder=new TextDecoder();
         const parser=createSseParser({onFrame:({data})=>{
+          if(generation!==followGeneration)return;
           let payload;try{payload=JSON.parse(data);}catch{return;}
-          if(payload?.type==='follow-ready'){setFollowState('正在跟随所选会话（只读）');return;}
+          if(payload?.type==='follow-ready'){followRetries=0;setFollowState('正在跟随所选会话（只读）');return;}
           if(payload?.type==='follow-status'){setFollowState(payload.status==='running'?'该会话正在运行':'该会话空闲');return;}
           if(payload?.type==='follow-message'){
-            if(chatAbort)return; // 不覆盖用户正在进行的 Pet 对话
             if(Number.isInteger(payload.seq)){if(followSeen.has(payload.seq))return;followSeen.add(payload.seq);}
+            if(chatAbort){setFollowState('Pet 对话进行中，跟随内容暂不弹出');return;}
+            if(follow.hideContent){setFollowState('收到一条新回复（已按设置隐藏）');return;}
             showChatBubble(payload.text+(payload.truncated?'（内容过长，已截断）':''),false);
             setFollowState(payload.interrupted?'该回复被中断':'收到一条新回复');
           }
         }});
         for(;;){const {done,value}=await reader.read();if(done)break;parser.push(decoder.decode(value,{stream:true}));}
         parser.push(decoder.decode());parser.end();
-        if(!controller.signal.aborted)setFollowState('跟随连接已结束',true);
+        if(generation!==followGeneration)return;
+        throw new Error('stream-ended');
       }catch(error){
+        if(followUserStopped||generation!==followGeneration)return;
         if(controller.signal.aborted)return;
-        setFollowState('跟随中断：'+(error.message||'host-unavailable'),true);
+        if(followRetries<FOLLOW_MAX_RETRIES){
+          const delay=followBackoff(followRetries++);
+          setFollowState(`连接中断，${Math.ceil(delay/1000)} 秒后第 ${followRetries} 次重连…`,true);
+          followRetryTimer=setTimeout(()=>{if(follow.enabled&&follow.sessionId)void startFollow({auto:true});},delay);
+        }else{
+          setFollowState('连接多次失败，已停止自动重连；可重新选择会话或重启 DSH',true);
+        }
       }finally{
         if(followAbort===controller){followAbort=null;paintFollowPanel();}
       }
     };
     if(followUI.enabled){
       followUI.enabled.addEventListener('change',async()=>{
-        if(!followUI.enabled.checked){stopFollow();applyFollow({enabled:false});return;}
-        applyFollow({enabled:true});
+        if(!followUI.enabled.checked){stopFollow();await applyFollow({enabled:false});return;}
+        setFollowState('正在保存设置…');
+        const ok=await applyFollow({enabled:true});
+        if(!ok){followUI.enabled.checked=false;setFollowState('设置保存失败，未启动跟随',true);return;}
         await loadFollowSessions();
-        if(follow.sessionId)void startFollow();
+        if(follow.enabled&&follow.sessionId)void startFollow();
       });
-      followUI.session.addEventListener('change',()=>{
+      followUI.session.addEventListener('change',async()=>{
         const sessionId=followUI.session.value;
-        applyFollow({sessionId});
+        setFollowState('正在保存会话选择…');
+        const ok=await applyFollow({sessionId});
+        if(!ok){setFollowState('会话选择保存失败，未启动跟随',true);return;}
+        if(follow.sessionId!==followUI.session.value)return; // 快速切换时只认最新选择
         if(follow.enabled&&sessionId)void startFollow();else stopFollow();
+      });
+      followUI.persistent.addEventListener('change',async()=>{
+        const ok=await applyFollow({hideContent:followUI.persistent.checked});
+        if(!ok)setFollowState('隐藏设置保存失败',true);
+        if(follow.hideContent)bubbleEl.hidden=true;
       });
       followUI.stop.addEventListener('click',()=>{stopFollow();});
       followUI.hide.addEventListener('click',()=>{bubbleEl.hidden=true;setFollowState('内容已隐藏（仍在跟随）');});
-      window.__dshFollow=()=>({enabled:follow.enabled,sessionId:follow.sessionId,active:!!followAbort});
+      window.__dshFollow=()=>({enabled:follow.enabled,sessionId:follow.sessionId,active:!!followAbort,hideContent:follow.hideContent===true});
       paintFollowPanel();
       if(follow.enabled)void loadFollowSessions();
     }

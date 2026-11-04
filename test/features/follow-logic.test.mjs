@@ -87,9 +87,11 @@ test('会话列表裁剪：限制数量、截断标题、丢弃空 id', () => {
 });
 
 test('follow 配置默认关闭且会话 id 受长度限制', () => {
-  assert.deepEqual(defaultFollowPreferences(), { enabled: false, sessionId: '' });
+  assert.deepEqual(defaultFollowPreferences(), { enabled: false, sessionId: '', hideContent: false });
   const next = sanitizeFollowPreferences({ enabled: true, sessionId: '  s1  ' });
-  assert.deepEqual(next, { enabled: true, sessionId: 's1' });
+  assert.deepEqual(next, { enabled: true, sessionId: 's1', hideContent: false });
+  assert.equal(sanitizeFollowPreferences({ hideContent: true }).hideContent, true);
+  assert.equal(sanitizeFollowPreferences({ hideContent: 'yes' }).hideContent, false);
   assert.equal(sanitizeFollowPreferences({ enabled: 'yes' }).enabled, false);
   assert.equal(sanitizeFollowPreferences({ sessionId: 'x'.repeat(500) }).sessionId.length, 120);
 });
