@@ -174,7 +174,9 @@
 | ✅ 已完成 | P1：preferences 请求体上限与错误反馈（§15） |
 | ⏸ 待人工选择 | ~~P2：双击语义 A / B~~ → **已定方案 C 并实现**（§16） |
 | ⏳ 待授权 | 设置项迁移到 DSH 原生 `Config`（§13） |
-| ⏳ 待授权 | AI 对话（先做只读 Probe）、TTS（需选型与模型体积评估） |
+| ✅ 已完成 | AI 对话只读 Probe（接口/会话/生命周期/日志边界，见 `docs/AI-DIALOG-PROBE.md`） |
+| ✅ 已完成 | 隔离 GUI 验收工具化（`tools/gui-check/`，14 项全通过） |
+| ⏳ 待授权 | AI 对话实现（先假 llm 打通，再谈真实调用） |
 | ⏳ 待排期 | README 版本与链接纠偏、`CHANGELOG.md`、版本对照表 |
 
 **需要主机 Codex 协助的部分**（本轮未动）：摸头/悬停手势对应的身体与头部动画曲线、点击反馈的动作组合选型、
@@ -444,6 +446,34 @@ renderer 点击“和她说话”
 | 风险 | 计费与配额、模型输出长度、NSFW/安全策略、iframe 内 SSE 的 keep-alive | 需在 Probe 阶段逐项确认 |
 
 **推进顺序**：① 只读 Probe（验证 `ctx.llm` 能注入、provider/model 从哪读、不真正请求）→ ② 假 llm 打通 SSE 与气泡
-→ ③ 用户确认后才接真实调用并加计费提示。本轮不做任何一步。
+→ ③ 用户确认后才接真实调用并加计费提示。
+
+> **第四阶段进展**：① 已完成，报告见 [AI-DIALOG-PROBE.md](AI-DIALOG-PROBE.md)（含 `ctx.llm.stream` 签名、
+> provider/model 来源、错误与取消识别、专属会话方案、A/B 模式对比、以及 EventSource-POST 与
+> `preferences.json` 共用两个风险的判断）。②③ 未开始，且完成 ① 后仍未发出任何真实请求。
+
+## 19. 第四阶段：GUI 测试工具与 Probe 归档
+
+| 交付物 | 位置 | 说明 |
+| --- | --- | --- |
+| 隔离 GUI 验收工具 | `tools/gui-check/run.mjs` + `README.md` | 零新依赖（Node 内置 WebSocket/fetch），14 项检查，独立 workdir/userData/配置/日志；只按自己记录的 PID 清理，成功失败都收尾并写 `report.json` |
+| AI 对话只读 Probe | `docs/AI-DIALOG-PROBE.md` | 8 个问题的结论与证据、A/B 模式对比、最小架构、两个架构风险 |
+
+复跑（Windows）：
+
+```powershell
+node tools/gui-check/run.mjs --model "<…>\大肥鱼.model3.json" --core "<…>\live2dcubismcore.min.js"
+```
+
+工具默认在 `~/.dsh/live2d/electron/*/electron.exe` 找 Electron；模型与 Core 只读引用，产物全部落在
+`%TEMP%\dsh-live2d-gui-check`，不入库。
+
+### 19.1 本轮新增的风险记录（未实现修复）
+
+1. **`EventSource` 不能发 POST**：AI 对话的流式响应改用 `fetch + ReadableStream` 解析 SSE（或两步法
+   POST 换 ticket + GET 订阅），不要用原生 `EventSource`。
+2. **desktop / overlay 共用 `preferences.json`**：两个进程各自持有启动时的内存快照并整份写回，
+   同时或先后修改不同字段会互相覆盖（典型：位置被旧快照写回）。判断为**中高**风险，
+   建议后续用文件锁、写前重读合并，或按模式分文件；本轮只记录，不改存档架构。
 
 
