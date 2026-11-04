@@ -41,6 +41,21 @@
     <input id="interaction-bubble-double" type="text" maxlength="600" placeholder="嘿嘿！" aria-label="双击气泡文案">
     <button id="interaction-reset" type="button">恢复默认互动设置</button>
   </div>
+  <p class="section">对话（模拟）</p>
+  <div id="chat">
+    <label><input id="chat-enabled" type="checkbox"> 启用对话（模拟）</label>
+    <label for="chat-mode">模式</label>
+    <select id="chat-mode" aria-label="对话模式">
+      <option value="follow">follow：跟随开发会话（示例）</option>
+      <option value="pet">pet：桌宠独立聊天</option>
+    </select>
+    <input id="chat-input" type="text" maxlength="500" placeholder="想对她说点什么…" aria-label="对话输入">
+    <div class="chat-actions">
+      <button id="chat-send" type="button">发送</button>
+      <button id="chat-stop" type="button" disabled>停止</button>
+    </div>
+    <p id="chat-state">所有回复都来自本地假模型，未接入真实 AI</p>
+  </div>
   <p class="section">装扮</p>
   <div id="outfit"></div>
   <button data-act="restore" type="button">恢复原始装扮</button>

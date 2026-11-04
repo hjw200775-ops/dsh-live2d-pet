@@ -8,6 +8,9 @@ import { inspectModel } from './model.js';
 import { authoredMotion } from './runtime/authored-motions.mjs';
 import {createPreferences} from './preferences.js';
 import {createActivity} from './activity.js';
+import { sanitizeChatPreferences, validateChatMessage, CHAT_LIMITS } from './features/chat/config.mjs';
+import { streamSimulatedReply } from './features/chat/simulator.mjs';
+import { encodeSseFrame } from './features/chat/sse.mjs';
 
 const require = createRequire(import.meta.url);
 const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
@@ -18,7 +21,12 @@ const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
  *   再叠加 JSON 结构、模型缩放与浮层坐标），取 16 KiB 留出约 3.6 倍余量；
  * - telemetry 与 bridge 只是状态心跳，保持 2 KiB 的紧边界。
  */
-export const REQUEST_LIMITS = Object.freeze({ preferences: 16 * 1024, telemetry: 2048, bridge: 2048 });
+export const REQUEST_LIMITS = Object.freeze({ preferences: 16 * 1024, telemetry: 2048, bridge: 2048, chat: 8 * 1024 });
+
+/** 模拟对话的单次超时；测试可用环境变量缩短，不影响生产默认。 */
+const CHAT_TIMEOUT_MS = Number(process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS) > 0
+  ? Number(process.env.DSH_LIVE2D_CHAT_TIMEOUT_MS)
+  : 30000;
 
 /** 读 JSON 请求体；超过 limit 后继续把剩余字节读掉（丢弃），再回 413。
  *  提前 return 而不排空会让客户端卡在“已发完、等响应”的半开状态，实测会挂死。
@@ -49,7 +57,7 @@ export async function startViewer(config) {
   const token = randomBytes(24).toString('hex');
   const bridgeToken = config.bridgeFile ? randomBytes(24).toString('hex') : '';
   const preferences=await createPreferences(config.preferencesFile);
-  const streams=new Set();let telemetry=null;
+  const streams=new Set();let telemetry=null;let chatBusy=false;
   let state, failure;
   try {
     if (!config.modelFile) throw new Error(
@@ -82,12 +90,17 @@ export async function startViewer(config) {
       if (name.endsWith('.mjs')) staticFiles.set(`runtime/${name}`, path.join(runtimeDir, name));
     }
   }
-  // 功能模块（src/features/）与 runtime 同规矩：整目录放行，新增文件不必再登记路由。
+  // 功能模块（src/features/**）整目录递归放行：新增文件/子目录不必再登记路由。
   {
     const featuresDir = fileURLToPath(new URL('./features/', import.meta.url));
-    for (const name of await readdir(featuresDir)) {
-      if (name.endsWith('.mjs')) staticFiles.set(`features/${name}`, path.join(featuresDir, name));
-    }
+    const walk = async (dir, prefix = '') => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) await walk(path.join(dir, entry.name), relative);
+        else if (entry.name.endsWith('.mjs')) staticFiles.set(`features/${relative}`, path.join(dir, entry.name));
+      }
+    };
+    await walk(featuresDir);
   }
   staticFiles.set('core.js', config.coreFile);
   staticFiles.set('pixi.js', path.resolve(path.dirname(require.resolve('pixi.js')), '../browser/pixi.min.js'));
@@ -124,6 +137,47 @@ export async function startViewer(config) {
         if(isPreferences) await preferences.update(input);
         else telemetry={mode:['idle','thinking','answering','error'].includes(input.mode)?input.mode:'idle',frames:Number(input.frames)||0,zoom:Number(input.zoom)||1,x:Number(input.x)||0,y:Number(input.y)||0,expression:String(input.expression||'').slice(0,40),motion:String(input.motion||'').slice(0,40),at:Date.now()};
         res.writeHead(204).end();return;
+      }
+      // 模拟对话：POST + SSE。本轮不接任何真实模型，所有文本来自本地仿真器。
+      if(req.method==='POST' && key==='chat') {
+        if(req.headers.origin!==origin){res.writeHead(403).end();return;}
+        const body=await readJsonBody(req,REQUEST_LIMITS.chat);
+        if(body.tooLarge){res.writeHead(413,{'Content-Type':'application/json; charset=utf-8',Connection:'close'}).end(JSON.stringify({error:'payload-too-large',store:'chat',limit:REQUEST_LIMITS.chat}));return;}
+        if(body.invalid){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:'invalid-json'}));return;}
+        const chat=sanitizeChatPreferences(preferences.get().chat);
+        if(!chat.enabled){res.writeHead(409,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:'chat-disabled'}));return;}
+        const message=validateChatMessage(body.value?.text);
+        if(!message.ok){res.writeHead(400,{'Content-Type':'application/json; charset=utf-8'}).end(JSON.stringify({error:message.code,limit:CHAT_LIMITS.messageChars}));return;}
+        if(chatBusy){res.writeHead(429,{'Content-Type':'application/json; charset=utf-8','Retry-After':'2'}).end(JSON.stringify({error:'chat-busy'}));return;}
+        chatBusy=true;
+        res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
+        res.flushHeaders?.();
+        const controller=new AbortController();
+        const onClose=()=>{if(!controller.signal.aborted)controller.abort();};
+        req.on('close',onClose);res.on('close',onClose);
+        let timedOut=false;
+        const timer=setTimeout(()=>{timedOut=true;controller.abort();},CHAT_TIMEOUT_MS);
+        const heartbeat=setInterval(()=>{if(!res.writableEnded)res.write(': keepalive\n\n');},10000);
+        const send=frame=>{if(!res.writableEnded)res.write(encodeSseFrame(frame));};
+        try {
+          send({event:'meta',data:{type:'meta',simulated:true,mode:chat.mode,model:'local-simulator'}});
+          let emitted=0;
+          for await (const chunk of streamSimulatedReply({prompt:message.text,mode:chat.mode,signal:controller.signal})) {
+            emitted+=chunk.length;
+            send({event:'delta',data:{type:'delta',text:chunk}});
+          }
+          if(timedOut) send({event:'error',data:{type:'error',code:'timeout'}});
+          else if(controller.signal.aborted) send({event:'end',data:{type:'end',reason:'aborted'}});
+          else if(emitted===0) send({event:'error',data:{type:'error',code:'empty-stream'}});
+          else send({event:'end',data:{type:'end',reason:'ok',simulated:true}});
+        } catch(error) {
+          send({event:'error',data:{type:'error',code:error?.code||'upstream-error'}});
+        } finally {
+          clearTimeout(timer);clearInterval(heartbeat);chatBusy=false;
+          req.off('close',onClose);res.off('close',onClose);
+          if(!res.writableEnded)res.end();
+        }
+        return;
       }
       if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
       res.setHeader('X-Content-Type-Options', 'nosniff');

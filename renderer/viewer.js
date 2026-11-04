@@ -13,12 +13,22 @@ import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
 import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText, doubleClickFallbackKind, shouldFireFeedback } from './features/interaction-preferences.mjs';
+import { defaultChatPreferences, sanitizeChatPreferences, CHAT_LIMITS } from './features/chat/config.mjs';
+import { createSseParser } from './features/chat/sse.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
-  let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
+  let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),chat=defaultChatPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
   const saveState=document.getElementById('save-state');
   let saveStateTimer;
+  const bubbleEl=document.getElementById('bubble');
+  let chatBubbleTimer;
+  // 对话气泡：streaming 期间保持显示（sticky），结束后 2.5 秒自动隐藏，避免长期挡住模型。
+  const showChatBubble=(text,sticky=false)=>{
+    bubbleEl.textContent=text;bubbleEl.hidden=false;
+    clearTimeout(chatBubbleTimer);
+    if(!sticky)chatBubbleTimer=setTimeout(()=>{bubbleEl.hidden=true;},2500);
+  };
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
   function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
@@ -63,6 +73,7 @@ import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubb
     preferences=await fetch('preferences.json').then(r=>{if(!r.ok)throw new Error('位置存档读取失败');return r.json();});
     preferencesLoaded=true;
     interaction=sanitizeInteractionPreferences(preferences.interaction);
+    chat=sanitizeChatPreferences(preferences.chat);
     ({zoom=1,x=0,y=0}=preferences.model||{});
     parent.postMessage({type:'dsh-live2d/ready',overlay:preferences.overlay},'*');
     const script=src=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error(`无法加载 ${src}`));document.head.append(s);});
@@ -193,7 +204,79 @@ import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubb
       paintInteraction();
       window.__dshInteraction=()=>({enabled:{...interaction.enabled},bubbles:{head:[...interaction.bubbles.head],body:[...interaction.bubbles.body],double:[...interaction.bubbles.double]},cooldownMs:interaction.cooldownMs});
     }
-    if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
+    // —— 对话（模拟）：本轮只走本地假模型；任何失败都不影响动画、装扮与点击反馈 ——
+    const chatUI={
+      enabled:document.getElementById('chat-enabled'),
+      mode:document.getElementById('chat-mode'),
+      input:document.getElementById('chat-input'),
+      send:document.getElementById('chat-send'),
+      stop:document.getElementById('chat-stop'),
+      state:document.getElementById('chat-state'),
+    };
+    let chatAbort=null;
+    const setChatState=(text,isError=false)=>{if(!chatUI.state)return;chatUI.state.textContent=text;chatUI.state.classList.toggle('error',isError);};
+    const paintChat=()=>{
+      if(!chatUI.enabled)return;
+      chatUI.enabled.checked=chat.enabled;
+      chatUI.mode.value=chat.mode;
+      const active=chat.enabled;
+      chatUI.input.disabled=!active;chatUI.send.disabled=!active;
+      chatUI.stop.disabled=!chatAbort;
+      setChatState(active
+        ?(chat.mode==='follow'?'模拟模式：跟随示例消息（未接入真实 AI）':'模拟模式：本地假模型回复（未接入真实 AI）')
+        :'对话未启用；所有回复都是模拟内容');
+    };
+    const applyChat=patch=>{chat=sanitizeChatPreferences(patch,chat);preferences.chat=chat;paintChat();scheduleSave();};
+    const stopChat=()=>{chatAbort?.abort();};
+    const sendChat=async()=>{
+      if(chatAbort||!chat.enabled)return;
+      const text=chatUI.input.value.trim();
+      if(!text){setChatState('先说点什么吧',true);return;}
+      if([...text].length>CHAT_LIMITS.messageChars){setChatState(`最多 ${CHAT_LIMITS.messageChars} 个字`,true);return;}
+      const controller=new AbortController();
+      chatAbort=controller;
+      let full='',deltas=0,ended=false,failure='';
+      const timeoutTimer=setTimeout(()=>{failure='timeout';controller.abort();},35000);
+      chatUI.stop.disabled=false;chatUI.send.disabled=true;
+      setChatState('模拟生成中…');
+      showChatBubble('…',true);
+      const parser=createSseParser({onFrame:({data})=>{
+        let payload;try{payload=JSON.parse(data);}catch{return;}
+        if(payload?.type==='meta'){if(payload.simulated!==true)failure='unexpected-model';return;}
+        if(payload?.type==='delta'&&typeof payload.text==='string'){full+=payload.text;deltas++;showChatBubble(full,true);return;}
+        if(payload?.type==='end'){ended=true;return;}
+        if(payload?.type==='error'){failure=payload.code||'upstream-error';}
+      }});
+      try{
+        const response=await fetch('chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:controller.signal});
+        if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.error||`HTTP ${response.status}`);}
+        const reader=response.body?.getReader();
+        if(!reader)throw new Error('no-stream');
+        const decoder=new TextDecoder();
+        for(;;){const {done,value}=await reader.read();if(done)break;parser.push(decoder.decode(value,{stream:true}));}
+        parser.push(decoder.decode());parser.end();
+        if(failure)setChatState(failure==='timeout'?'超时了，已停止':`生成失败：${failure}`,true);
+        else if(!deltas)setChatState('没有收到内容（空流）',true);
+        else if(!ended)setChatState('流意外结束（缺少结束事件）',true);
+        else setChatState('回复完成（模拟）');
+      }catch(error){
+        if(controller.signal.aborted&&failure!=='timeout')setChatState('已停止生成');
+        else setChatState(failure==='timeout'?'超时了，已停止':`发送失败：${error.message}`,true);
+      }finally{
+        clearTimeout(timeoutTimer);chatAbort=null;
+        chatUI.stop.disabled=true;chatUI.send.disabled=!chat.enabled;
+        if(full)showChatBubble(full,false);else bubbleEl.hidden=true;
+      }
+    };
+    if(chatUI.enabled){
+      chatUI.enabled.addEventListener('change',()=>applyChat({enabled:chatUI.enabled.checked}));
+      chatUI.mode.addEventListener('change',()=>applyChat({mode:chatUI.mode.value}));
+      chatUI.send.addEventListener('click',()=>{void sendChat();});
+      chatUI.stop.addEventListener('click',stopChat);
+      chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});
+      window.__dshChat=()=>({enabled:chat.enabled,mode:chat.mode,busy:!!chatAbort,config:{...chat}});
+      paintChat();
+    }    if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
     paintPressed();
     let drag, windowDrag=false, lean=0, leanTarget=0;
     if(model.internalModel.renderer?.setClippingMaskBufferSize) model.internalModel.renderer.setClippingMaskBufferSize(2048);

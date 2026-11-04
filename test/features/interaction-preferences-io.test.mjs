@@ -90,8 +90,8 @@ test('存档文件损坏的 interaction 段会被就地修正，不影响启动'
 
 test('服务端把 src/features 整目录暴露给渲染器，新模块不必逐条登记路由', async () => {
   const source = await readFile(path.resolve('src/viewer-server.js'), 'utf8');
-  assert.match(source, /features\/\$\{name\}/);
-  assert.match(source, /readdir\(featuresDir\)/);
+  assert.match(source, /features\/\$\{relative\}/);
+  assert.match(source, /readdir\(dir, \{ withFileTypes: true \}\)/);
 });
 
 test('渲染器引用互动配置模块并渲染出全部面板控件', async () => {

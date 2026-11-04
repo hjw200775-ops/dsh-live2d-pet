@@ -126,6 +126,7 @@
 | 第二阶段（功能） | `npm test` | **132 / 132 通过**（+20 互动配置用例） |
 | 第三阶段（审核修订） | `npm test` | **141 / 141 通过**（+5 HTTP 边界、+4 手势语义） |
 | 第三阶段收尾（P2 方案 C） | `npm test` | **148 / 148 通过**（+7 双击折叠用例） |
+| 第五阶段（存档隔离 + 模拟对话） | `npm test` | **182 / 182 通过**（+7 存档、+27 对话） |
 | 发布检查 | `node scripts/check_release.mjs` | **103 个已跟踪文件通过**，无模型/Core/本机路径/密钥 |
 | 仓库完整性 | `git ls-remote` | `origin/dev/features` = 本地 `HEAD`，ahead/behind 0/0 |
 
@@ -175,7 +176,9 @@
 | ⏸ 待人工选择 | ~~P2：双击语义 A / B~~ → **已定方案 C 并实现**（§16） |
 | ⏳ 待授权 | 设置项迁移到 DSH 原生 `Config`（§13） |
 | ✅ 已完成 | AI 对话只读 Probe（接口/会话/生命周期/日志边界，见 `docs/AI-DIALOG-PROBE.md`） |
-| ✅ 已完成 | 隔离 GUI 验收工具化（`tools/gui-check/`，14 项全通过） |
+| ✅ 已完成 | 存档隔离：desktop 用 `preferences.desktop.json`，overlay 保持 `preferences.json`，首次启动安全迁移 |
+| ✅ 已完成 | 模拟 AI 对话 MVP（follow / pet 双模式、SSE、停止、取消/超时/空流/错误处理，**全部假模型**） |
+| ✅ 已完成 | 隔离 GUI 验收工具化（`tools/gui-check/`） |
 | ⏳ 待授权 | AI 对话实现（先假 llm 打通，再谈真实调用） |
 | ⏳ 待排期 | README 版本与链接纠偏、`CHANGELOG.md`、版本对照表 |
 
@@ -477,3 +480,47 @@ node tools/gui-check/run.mjs --model "<…>\大肥鱼.model3.json" --core "<…>
    建议后续用文件锁、写前重读合并，或按模式分文件；本轮只记录，不改存档架构。
 
 
+
+## 20. 第五阶段：存档隔离与模拟 AI 对话
+
+### 20.1 存档隔离（desktop / overlay）
+
+| 模式 | 存档文件 | 说明 |
+| --- | --- | --- |
+| overlay（页面内浮层） | `<configDir>/preferences.json` | 保持原行为 |
+| desktop（独立窗口） | `<configDir>/preferences.desktop.json` | 本轮新增；首次启动从旧文件**只读复制**一份 |
+
+- 迁移规则：目标已存在 → 完全不覆盖；旧文件缺失/损坏 → 不创建目标，交给默认值；**旧文件永不删除、永不修改**。
+- 回退方案：删掉 `preferences.desktop.json`（下次启动会重新迁移），或用 `DSH_LIVE2D_PREFERENCES_FILE` 指定路径；
+  想彻底回到单文件，把该环境变量指向 `preferences.json` 即可，无需改代码。
+- 两进程各自整份回写的问题因此消失：overlay 与 desktop 不再写同一个文件。
+
+### 20.2 模拟对话（本轮不接真实模型）
+
+**明确标注**：所有回复来自 `src/features/chat/simulator.mjs`，前缀固定 `【模拟】`，响应首帧是
+`{"type":"meta","simulated":true,"model":"local-simulator"}`，面板文案也写明"未接入真实 AI"。
+
+| 层 | 实现 |
+| --- | --- |
+| 配置 | `preferences.json` 的 `chat` 段：`enabled=false`、`mode='follow'`、`maxTokens=256`、`historyTurns=6`、`persona=''`，带范围校验 |
+| 路由 | `POST /<token>/chat`（同源 + 8 KiB 请求体上限 + 并发 1 + 单条 500 字）→ SSE |
+| 帧 | `meta` → 若干 `delta` → `end{reason}`，失败时 `error{code}`；每 10 秒发 `: keepalive` |
+| 取消 | 客户端 `AbortController` → 请求断开 → 服务端 abort 仿真流；服务端 30 秒超时回 `error{code:'timeout'}` |
+| 异常 | `empty-stream`（无分片）、`upstream-error`（仿真器抛错）、`chat-disabled`(409)、`chat-busy`(429)、`text-too-long`(400) |
+| 浏览器 | `fetch` + `response.body.getReader()` + `TextDecoder(stream)` + 自研 SSE 解析（不用 EventSource，因为它只支持 GET） |
+| UI | 面板「对话（模拟）」：启用开关、follow/pet 模式、输入框、发送/停止、状态行；回复复用现有气泡 |
+| 隐私 | 正文不写日志、不入 `preferences.json`、不进 telemetry；测试断言 prompt 不出现在任何落盘文件里 |
+| 宿主隔离 | 对话功能**不注入 `llm`**，模型服务不存在也不影响动画、装扮、跟随与点击反馈 |
+
+follow 模式的真实接入约束（未来）：用户主动开启才订阅指定会话、不自动读所有会话、不展示推理/工具结果/敏感字段、
+正文不落盘、关闭后立即停止订阅。pet 模式未来接入时才用 `sessionController.create/prompt`，并保留完整取消。
+
+### 20.3 测试
+
+`npm test`：**182 / 182 通过**（第五阶段新增 34 项）。
+
+- 存档：迁移内容、幂等、不覆盖、坏档、双档并存、回退重迁（7 项）
+- 对话配置：默认值、类型/范围、500 字按码点计数（6 项）
+- SSE：编码回读、逐字符切分、CRLF/CR/LF、多行 data、注释、`[DONE]`、无尾空行、UTF-8 跨块（7 项）
+- 仿真器：正常、follow、空、抛错、stall、取消、无密钥样式（7 项）
+- HTTP：409 未启用、SSE 帧序、follow 不回显、空/超长、413/403、并发 429、正文不落盘、渲染器接线（8 项）

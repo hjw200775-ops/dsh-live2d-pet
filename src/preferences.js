@@ -2,16 +2,20 @@ import {readFile,writeFile,rename,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import { defaultInteractionPreferences, sanitizeInteractionPreferences } from './features/interaction-preferences.mjs';
+import { defaultChatPreferences, sanitizeChatPreferences } from './features/chat/config.mjs';
 
 export function sanitizePreferences(input, previous = {version:1,model:{zoom:1,x:0,y:0}}) {
   const result=structuredClone(previous);
   if(!result.model)result.model={zoom:1,x:0,y:0};
   // 老存档没有 interaction 段：补默认值，保证升级后行为与 v0.7.3 完全一致。
   result.interaction=sanitizeInteractionPreferences(result.interaction,defaultInteractionPreferences());
+  // 对话配置默认关闭；老存档同样补默认值，保证"没配过 = 不会产生任何调用"。
+  result.chat=sanitizeChatPreferences(result.chat,defaultChatPreferences());
   const finite=(n,min,max)=>typeof n==='number' && Number.isFinite(n) && n>=min && n<=max;
   if(input?.overlay && finite(input.overlay.left,0,100000) && finite(input.overlay.top,0,100000)) result.overlay={left:input.overlay.left,top:input.overlay.top};
   if(input?.model && finite(input.model.zoom,.25,3) && finite(input.model.x,-10000,10000) && finite(input.model.y,-10000,10000)) result.model={zoom:input.model.zoom,x:input.model.x,y:input.model.y};
   if(input?.interaction) result.interaction=sanitizeInteractionPreferences(input.interaction,result.interaction);
+  if(input?.chat) result.chat=sanitizeChatPreferences(input.chat,result.chat);
   return result;
 }
 export async function createPreferences(file) {
