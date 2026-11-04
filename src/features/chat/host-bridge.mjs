@@ -4,9 +4,11 @@ import { execFile } from 'node:child_process';
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CHAT_LIMITS, validateChatMessage } from './config.mjs';
+import { encodeSseFrame } from './sse.mjs';
 import { safeCode, writeChatStream } from './stream.mjs';
 import { streamHostChat } from './host-adapter.mjs';
-import { authorizeRealChat } from './authorization.mjs';
+import { authorizeFollow, authorizeRealChat } from './authorization.mjs';
+import { createFollowDeduper, followFrameFromEvent, followStatusFrame } from './follow.mjs';
 
 export const HOST_BRIDGE_FILE = 'host-bridge.json';
 export const HOST_BRIDGE_PROTOCOL = 'dsh-live2d-host-bridge/1';
@@ -56,6 +58,7 @@ export async function startHostBridge({
   now = () => Date.now(),
   authorize = null,
   restrictFile = null,
+  sessionSource = null,
 } = {}) {
   if (!configDir) throw new Error('startHostBridge 需要 configDir');
   const bridgeFile = path.join(configDir, HOST_BRIDGE_FILE);
@@ -63,12 +66,14 @@ export async function startHostBridge({
   let busy = false;
   let closing = false;
   const active = new Set();
+  let followBusy = false;
+  const followControllers = new Set();
   let aclRestricted = true;
   let origin = '';
 
   const server = createServer(async (req, res) => {
     try {
-      if (req.method !== 'POST' || req.url !== '/chat') { res.writeHead(404).end(); return; }
+      if (req.method !== 'POST' || !['/chat', '/follow', '/follow/sessions'].includes(req.url)) { res.writeHead(404).end(); return; }
       if (req.headers.authorization !== `Bearer ${token}`) {
         res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'unauthorized' }));
         return;
@@ -78,9 +83,66 @@ export async function startHostBridge({
         res.writeHead(403).end();
         return;
       }
+      // Follow 会话列表：只读、只走官方 sessionController.list()
+      if (req.url === '/follow/sessions') {
+        const sessions = sessionSource ? await sessionSource.list() : [];
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify({ sessions }));
+        return;
+      }
       const body = await readJsonBody(req, HOST_BRIDGE_LIMITS.bodyBytes);
       if (body.tooLarge) { res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8', Connection: 'close' }).end(JSON.stringify({ error: 'payload-too-large', limit: HOST_BRIDGE_LIMITS.bodyBytes })); return; }
       if (body.invalid) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'invalid-json' })); return; }
+      if (req.url === '/follow') {
+        const sessionId = typeof body.value?.sessionId === 'string' ? body.value.sessionId.trim() : '';
+        const allowed = await authorizeFollow({ configDir, sessionId });
+        if (!allowed.ok) {
+          res.writeHead(allowed.reason === 'session-mismatch' ? 403 : 409, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: allowed.reason }));
+          return;
+        }
+        if (!sessionSource) { res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'session-source-unavailable' })); return; }
+        if (followBusy) { res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '2' }).end(JSON.stringify({ error: 'follow-busy' })); return; }
+        followBusy = true;
+        const controller = new AbortController();
+        followControllers.add(controller);
+        const dedupe = createFollowDeduper();
+        let unsubscribe = () => {};
+        try {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+          res.flushHeaders?.();
+          const onClose = () => { if (!controller.signal.aborted) controller.abort(); };
+          req.on('close', onClose);
+          res.on('close', onClose);
+          const heartbeat = setInterval(() => { try { if (!res.writableEnded) res.write(': keepalive\n\n'); } catch { /* 已断开 */ } }, 10000);
+          const send = frame => { try { if (!res.writableEnded) res.write(encodeSseFrame({ event: frame.type, data: frame })); } catch { /* 已断开 */ } };
+          send({ type: 'follow-ready', sessionId });
+          unsubscribe = sessionSource.subscribe(({ session, event, status }) => {
+            if (controller.signal.aborted) return;
+            if (status) {
+              if (status.sessionId !== sessionId) return;
+              const frame = followStatusFrame(status.sessionId, status.running);
+              if (frame) send(frame);
+              return;
+            }
+            if (!session || session.id !== sessionId) return;
+            const frame = followFrameFromEvent(session, event);
+            if (!frame || !dedupe.accept(frame.seq)) return;
+            send(frame);
+          });
+          await new Promise(resolve => {
+            if (controller.signal.aborted) return resolve();
+            controller.signal.addEventListener('abort', resolve, { once: true });
+          });
+          clearInterval(heartbeat);
+          req.off('close', onClose);
+          res.off('close', onClose);
+        } finally {
+          unsubscribe();
+          followBusy = false;
+          followControllers.delete(controller);
+          try { if (!res.writableEnded) res.end(); } catch { /* 已断开 */ }
+        }
+        return;
+      }
       const message = validateChatMessage(body.value?.text);
       if (!message.ok) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: message.code, limit: CHAT_LIMITS.messageChars })); return; }
       if (busy) { res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '2' }).end(JSON.stringify({ error: 'chat-busy' })); return; }
@@ -173,6 +235,8 @@ export async function startHostBridge({
       hits.length = 0;
       for (const controller of active) { try { controller.abort(); } catch { /* 忽略 */ } }
       active.clear();
+      for (const controller of followControllers) { try { controller.abort(); } catch { /* 忽略 */ } }
+      followControllers.clear();
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections?.(); });
       await rm(bridgeFile, { force: true }).catch(() => {});
     },

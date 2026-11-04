@@ -204,7 +204,7 @@ test('渲染器区分 end.reason，异常结束不会被当成成功', async () 
 
 test('渲染器在卸载/禁用/切换模式时取消未结束请求并清理定时器', async () => {
   const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
-  assert.match(viewer, /disposed=true;chatAbort\?\.abort\(\);clearTimeout\(chatBubbleTimer\)/);
+  assert.match(viewer, /disposed=true;chatAbort\?\.abort\(\);followAbort\?\.abort\(\);clearTimeout\(chatBubbleTimer\)/);
   assert.match(viewer, /if\(!chatUI\.enabled\.checked\)stopChat\(\)/);
   assert.match(viewer, /chatUI\.mode\.addEventListener\('change',\(\)=>\{stopChat\(\)/);
 });

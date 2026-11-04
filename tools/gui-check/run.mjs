@@ -239,6 +239,20 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
 
   await evaluate(`(()=>{window.fetch=window.__realFetch;const c=document.getElementById('interaction-body');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(1200);
+  // ---- 跟随开发会话（只读）----
+  const followBoot = await evaluate(`({ enabled:document.getElementById('follow-enabled').checked, hasSelect:!!document.getElementById('follow-session'), state:document.getElementById('follow-state').textContent })`);
+  check('跟随控件存在且默认关闭', followBoot.enabled === false && followBoot.hasSelect === true && followBoot.state.includes('未启用'), JSON.stringify(followBoot));
+
+  await evaluate(`(()=>{const c=document.getElementById('follow-enabled');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  let followDegraded = null;
+  for (let i = 0; i < 20; i++) {
+    followDegraded = await evaluate(`document.getElementById('follow-state').textContent`);
+    if (followDegraded.includes('Host 不可用')) break;
+    await sleep(250);
+  }
+  check('无 DSH Host 时跟随明确降级且不报错', followDegraded?.includes('Host 不可用') === true, String(followDegraded));
+  await evaluate(`(()=>{const c=document.getElementById('follow-enabled');c.checked=false;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+
   // ---- 对话（模拟）----
   const chatBoot = await evaluate(`({ send:!!document.getElementById('chat-send'), enabled:document.getElementById('chat-enabled').checked, mode:document.getElementById('chat-mode').value })`);
   check('对话（模拟）控件存在且按配置启用', chatBoot.send === true && chatBoot.enabled === true && chatBoot.mode === 'pet', JSON.stringify(chatBoot));

@@ -724,3 +724,67 @@ overlay 仍可正常聊天，但永远走模拟。请求正文的 `backend`/`mod
 - [ ] 真实 Host 上模型可解析、`llm.stream` 可用
 - [ ] GUI 显示「DSH 模型」而非「已降级」
 - [ ] 首笔调用后核对额度与取消行为；关闭开关立即回到模拟
+## 25. 第七阶段第三部分：真实 Follow（只读陪伴）
+
+### 25.1 接口核对（离线，基于本机 DSH 0.2.1-rc.5 的类型定义与官方文档）
+
+| 能力 | 结论 | 使用方式 |
+| --- | --- | --- |
+| 列出会话 | `sessionController.list(request, signal)` 返回可见会话摘要 | 只调用该方法，不读会话数据库 |
+| 订阅事件 | `session/event(this: Scoped<Session>, session, event)` 是 post-commit、按 agent scope 过滤的事件 | `ctx.on('session/event', (session, event) => …)`，只处理 `session.id === 已选会话` |
+| 最终回复结构 | `assistant/message.data.message.content` 是块数组；只取 `type === 'text'` | 推理 / tool-call / tool-result 块一律丢掉 |
+| 运行状态 | `api-session/status(sessionId, running)` | 映射成 `running` / `idle` 两态 |
+| 会话 id 关联 | `session/event` 的第一个参数就是 Session 对象，`session.id` 可靠 | 不依赖 agent id 反推 session |
+| 历史回放 | 默认**不**回放，只接收订阅之后的新事件 | 订阅建立后才开始转发 |
+
+**未在真实 DSH 会话上实测**（本机 Electron 测试环境没有运行中的 DSH Host），本轮用官方接口 + Fake Session 验证；
+真实接入前需在运行中的 DSH 上做一次手工确认（见 25.6）。
+
+### 25.2 工作流程
+
+```
+设置面板：启用 Follow + 手动选择会话（保存在 preferences.desktop.json 的 follow 段）
+  → 渲染器 POST /follow/sessions（viewer 同源）
+      → viewer 转发 Host /follow/sessions（Bearer 令牌，127.0.0.1）
+          → Host 调 sessionController.list() 返回 {id,title}（标题截断 60 字）
+  → 渲染器 POST /follow {sessionId}
+      → Host 校验 follow.enabled && follow.sessionId === 请求值（不信任正文其它字段）
+      → 订阅 session/event 与 api-session/status，只转发该 session 的 assistant/message 文本块
+      → SSE 帧：follow-ready / follow-status / follow-message{text,truncated,seq}
+  → 渲染器：seq 去重、160 字截断、textContent 写入气泡
+  → 关闭 Follow / 切换模式 / 退出：abort 请求 → Host 收到 close 立即退订
+```
+
+### 25.3 隐私边界
+
+- 只展示所选会话的 `assistant/message` 中 `type:'text'` 的块；推理、工具调用/结果、系统提示词、Shell 日志一律丢弃；
+- 不自动回放历史，只收订阅之后的新事件；
+- 气泡用 `textContent`，不解释 HTML；
+- 界面常驻隐私提示 + 「隐藏内容」按钮（一键清空气泡，不停止跟随）；
+- 不依赖敏感词正则承诺"绝对防泄漏"——最终回复本身仍可能含敏感信息，界面明确提示；
+- 日志只记录帧类型与错误码，不记录正文、会话标题或令牌。
+
+### 25.4 与 Pet / 收费链路隔离
+
+- Follow 有独立的 `followBusy` 并发位，不占用 Pet 的每分钟 6 次配额；
+- Follow 只读，不调用 `llm.stream`、不向开发会话发送 prompt、不触发任何工具；
+- Pet 对话进行中（`chatAbort` 活跃）时，Follow 消息不覆盖气泡；
+- 桥接关闭时同时 abort 全部 Follow 流并退订。
+
+### 25.5 测试
+
+`npm test`：**264 / 264 通过**（本轮 +19）：Follow 纯逻辑 7、Host 流 9、Electron 代理与接线 3。
+覆盖：未选择会话禁止订阅、会话不匹配拒绝、A/B 会话隔离、推理/工具结果不展示、最终回复展示、
+重复 seq 去重、关闭/断线退订、Host 离线降级、Follow 不调用 llm.stream、日志无正文/标题/令牌、
+Follow 与 Pet 并存、插件卸载清理。
+
+GUI：22 项通过（新增"跟随控件默认关闭""无 Host 时明确降级"）。
+
+### 25.6 未解决风险
+
+1. **真实 DSH 会话未实测**：`sessionController.list()` 与 `session/event` 的行为按 0.2.1-rc.5 接口实现，
+   但本机测试环境没有运行中的 DSH Host，需在真实 DSH 上手工验证一次（选择会话→收到回复→关闭退订）。
+2. 会话标题可能包含敏感信息：选择器显示标题（截断 60 字），属于用户可见范围，仍需用户自行判断。
+3. `session/event` 按 agent scope 过滤：若未来 DSH 改变 scope 语义，需重新确认不会收到未授权会话。
+4. Follow 只展示"最终回复"，不是实时 token 流（真实接口如此），文档与 UI 不应宣称实时逐字。
+5. 桥接令牌仍在 `host-bridge.json`，Follow 与 Pet 共用同一条认证通道。

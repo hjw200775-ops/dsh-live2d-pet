@@ -63,6 +63,20 @@
     </div>
     <p id="chat-state">所有回复都来自本地假模型，未接入真实 AI</p>
   </div>
+  <p class="section">跟随开发会话（只读）</p>
+  <div id="follow">
+    <label><input id="follow-enabled" type="checkbox"> 启用跟随（只读，默认关闭）</label>
+    <label for="follow-session">目标会话（必须手动选择）</label>
+    <select id="follow-session" aria-label="跟随目标会话">
+      <option value="">— 请选择会话 —</option>
+    </select>
+    <div class="chat-actions">
+      <button id="follow-stop" type="button">停止跟随</button>
+      <button id="follow-hide" type="button">隐藏内容</button>
+    </div>
+    <p id="follow-state">未启用：不会读取任何会话</p>
+    <p class="privacy">只显示你所选会话中助手最终回复的可见文本；推理、工具结果与系统提示不会展示。回复本身也可能含敏感信息，请随时点「隐藏内容」。</p>
+  </div>
   <p class="section">装扮</p>
   <div id="outfit"></div>
   <button data-act="restore" type="button">恢复原始装扮</button>

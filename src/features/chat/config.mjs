@@ -66,3 +66,21 @@ export function validateChatMessage(text) {
   if ([...value].length > CHAT_LIMITS.messageChars) return { ok: false, code: 'text-too-long' };
   return { ok: true, text: value };
 }
+
+/** Follow（只读陪伴）：默认关闭，必须由用户显式选择一个会话。 */
+export const FOLLOW_LIMITS = Object.freeze({ maxSessionIdLength: 120, maxSessions: 50, maxTextChars: 160, maxTitleChars: 60 });
+
+export const DEFAULT_FOLLOW_PREFERENCES = Object.freeze({ enabled: false, sessionId: '' });
+
+export function defaultFollowPreferences() {
+  return { ...DEFAULT_FOLLOW_PREFERENCES };
+}
+
+export function sanitizeFollowPreferences(input, previous = defaultFollowPreferences()) {
+  const base = { ...defaultFollowPreferences(), ...previous };
+  if (typeof input?.enabled === 'boolean') base.enabled = input.enabled;
+  if (typeof input?.sessionId === 'string') {
+    base.sessionId = input.sessionId.trim().slice(0, FOLLOW_LIMITS.maxSessionIdLength);
+  }
+  return { enabled: base.enabled, sessionId: base.sessionId };
+}

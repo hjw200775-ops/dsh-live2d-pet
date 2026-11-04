@@ -10,6 +10,7 @@ import { createFileLogger } from './log-file.mjs';
 import { launchDesktopPet, prepareAssets } from './provision.mjs';
 import { resolvePreferencesFile } from './features/preferences-store.mjs';
 import { startHostBridge } from './features/chat/host-bridge.mjs';
+import { createSessionSource } from './features/chat/session-source.mjs';
 
 export const name = 'deepseek-live2d';
 export const inject = ['webServer', 'credentials'];
@@ -74,11 +75,14 @@ export async function apply(ctx, config = {}) {
   // Host 侧聊天桥接（可选）：只监听 127.0.0.1，令牌每次启动换新。
   // 任何失败都只记日志，不影响动画、装扮、跟随与点击反馈。
   let hostBridge=null;
-  if(process.env.DSH_LIVE2D_HOST_BRIDGE!=='0'){
+  let sessionSource=null;
+  // 桥接依赖 Host 的服务查找能力；没有 ctx.get 的极简宿主（例如单元测试的假 ctx）直接跳过。
+  if(process.env.DSH_LIVE2D_HOST_BRIDGE!=='0' && typeof ctx.get==='function'){
     try{
-      const llm=typeof ctx.get==='function'?ctx.get('llm'):undefined;
-      const agentDefaultModel=typeof ctx.get==='function'?ctx.get('agentDefaultModel'):undefined;
-      hostBridge=await startHostBridge({configDir,llm,agentDefaultModel,log});
+      const llm=ctx.get('llm');
+      const agentDefaultModel=ctx.get('agentDefaultModel');
+      sessionSource=createSessionSource({ctx,sessionController:ctx.get('sessionController')});
+      hostBridge=await startHostBridge({configDir,llm,agentDefaultModel,sessionSource,log});
       log(`[live2d] host bridge 127.0.0.1:${hostBridge.info.port}`);
     }catch(error){
       hostBridge=null;
@@ -114,5 +118,5 @@ export async function apply(ctx, config = {}) {
       res.end(req.method === 'HEAD' ? undefined : JSON.stringify(payload));
     } });
   } catch (e) { unsubs.forEach(fn=>fn());stopBridge();activity.dispose();if(viewer)await viewer.close(); throw e; }
-  ctx.effect(() => () => { clearInterval(balanceTimer);unregister();unsubs.forEach(fn=>fn());stopBridge();activity.dispose();return Promise.all([viewer?.close?.(),hostBridge?.close?.()]); });
+  ctx.effect(() => () => { clearInterval(balanceTimer);unregister();unsubs.forEach(fn=>fn());stopBridge();activity.dispose();return Promise.all([viewer?.close?.(),hostBridge?.close?.(),sessionSource?.dispose?.()]); });
 }

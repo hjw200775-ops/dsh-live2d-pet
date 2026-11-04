@@ -37,6 +37,12 @@ canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}canvas
 .chat-actions button{flex:1;text-align:center}
 #chat-state{margin:0;font-size:10px;line-height:1.4;color:#8ea0b3}
 #chat-state.error{color:#ff9c9c}
+#follow{display:flex;flex-direction:column;gap:5px}
+#follow label{font-size:11px;color:#9eb0c3}
+#follow select{width:100%;min-height:28px;border:0;border-radius:8px;padding:5px 6px;background:#243140;color:#eaf7ff;font-size:11px}
+#follow-state{margin:0;font-size:10px;line-height:1.4;color:#8ea0b3}
+#follow-state.error{color:#ff9c9c}
+#follow .privacy{margin:0;font-size:10px;line-height:1.4;color:#9eb0c3}
 #chat label.warn{color:#ffc98a}
 #chat-warning{margin:0;font-size:10px;line-height:1.4;color:#ffc98a}
 .section{margin:8px 0 0;color:#d5e4f2;font-size:12px}

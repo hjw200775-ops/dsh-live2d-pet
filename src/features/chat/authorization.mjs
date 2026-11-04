@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { defaultChatPreferences, sanitizeChatPreferences } from './config.mjs';
+import { defaultChatPreferences, sanitizeChatPreferences, defaultFollowPreferences, sanitizeFollowPreferences } from './config.mjs';
 import { resolveHostModel } from './host-adapter.mjs';
 
 export const REAL_CHAT_ENV = 'DSH_LIVE2D_CHAT_REAL';
@@ -53,4 +53,25 @@ export async function authorizeRealChat({ configDir, llm, agentDefaultModel, env
     else if (typeof llm?.stream !== 'function') reasons.push('llm-unavailable');
   }
   return { ok: reasons.length === 0, reasons, chat, model };
+}
+
+/** 读取 Desktop 存档里的 follow 段；缺失或损坏按未启用处理。 */
+export async function readStoredFollow(configDir) {
+  if (!configDir) return defaultFollowPreferences();
+  try {
+    const parsed = JSON.parse(await readFile(path.join(configDir, DESKTOP_CHAT_FILE), 'utf8'));
+    if (parsed && typeof parsed === 'object' && parsed.follow) return sanitizeFollowPreferences(parsed.follow, defaultFollowPreferences());
+  } catch { /* 未授权 */ }
+  return defaultFollowPreferences();
+}
+
+/**
+ * Follow 授权：必须由用户在 Desktop 里显式开启并选定同一个会话。
+ * 不允许服务端自动挑选、也不允许请求正文指定一个未保存的会话。
+ */
+export async function authorizeFollow({ configDir, sessionId } = {}) {
+  const follow = await readStoredFollow(configDir);
+  if (follow.enabled !== true) return { ok: false, reason: 'follow-disabled', follow };
+  if (!sessionId || follow.sessionId !== sessionId) return { ok: false, reason: 'session-mismatch', follow };
+  return { ok: true, reason: 'ok', follow };
 }

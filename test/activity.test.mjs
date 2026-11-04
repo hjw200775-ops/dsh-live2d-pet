@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createActivity} from '../src/activity.js';
 import {createPreferences} from '../src/preferences.js';
 import {defaultInteractionPreferences} from '../src/features/interaction-preferences.mjs';
-import {defaultChatPreferences} from '../src/features/chat/config.mjs';
+import {defaultChatPreferences, defaultFollowPreferences} from '../src/features/chat/config.mjs';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -29,7 +29,7 @@ test('preferences survive reconstruction, merge partial updates and ignore corru
  const p=await createPreferences(file);
  await Promise.all([p.update({overlay:{left:200,top:100}}),p.update({model:{zoom:1.4,x:30,y:-20}})]);
  const reopened=await createPreferences(file);
- assert.deepEqual(reopened.get(),{version:1,overlay:{left:200,top:100},model:{zoom:1.4,x:30,y:-20},interaction:defaultInteractionPreferences(),chat:defaultChatPreferences()});
+ assert.deepEqual(reopened.get(),{version:1,overlay:{left:200,top:100},model:{zoom:1.4,x:30,y:-20},interaction:defaultInteractionPreferences(),chat:defaultChatPreferences(),follow:defaultFollowPreferences()});
  await reopened.update({model:{zoom:NaN,x:Infinity,y:0},overlay:{left:-20,top:20}});
  assert.deepEqual(JSON.parse(await readFile(file,'utf8')),p.get());
 });

@@ -74,6 +74,41 @@ async function loadHostBridge(configDir) {
   } catch { return null; }
 }
 
+/** 通用 Host 流式转发：成功返回 true（已写帧），失败返回 false（未写帧）。 */
+async function proxyHostStream({ res, host, path, body, signal, timeoutMs }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const link = () => controller.abort();
+  if (signal) { if (signal.aborted) controller.abort(); else signal.addEventListener('abort', link, { once: true }); }
+  try {
+    const response = await fetch(`${host.url}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${host.token}` },
+      body,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      try { res.writeHead(response.status, { 'Content-Type': 'application/json; charset=utf-8' }).end(text || JSON.stringify({ error: 'host-error' })); } catch { /* 已断开 */ }
+      return true;
+    }
+    if (!response.body) return false;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders?.();
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!res.writableEnded) res.write(Buffer.from(value));
+      }
+    } catch { /* 上游中断交由 finally 结束 */ }
+    try { if (!res.writableEnded) res.end(); } catch { /* 已断开 */ }
+    return true;
+  } catch { return false; }
+  finally { clearTimeout(timer); signal?.removeEventListener('abort', link); }
+}
+
 /** 把渲染器的 /chat 转发到 Host 桥接；返回 false 表示"还没写出任何帧，可以降级"。 */
 async function proxyHostChat({ res, host, text, mode, signal, timeoutMs }) {
   const controller = new AbortController();
@@ -192,6 +227,41 @@ export async function startViewer(config) {
         if(isPreferences) await preferences.update(input);
         else telemetry={mode:['idle','thinking','answering','error'].includes(input.mode)?input.mode:'idle',frames:Number(input.frames)||0,zoom:Number(input.zoom)||1,x:Number(input.x)||0,y:Number(input.y)||0,expression:String(input.expression||'').slice(0,40),motion:String(input.motion||'').slice(0,40),at:Date.now()};
         res.writeHead(204).end();return;
+      }
+      // Follow（只读陪伴）：会话列表与事件流都转发 Host；Host 不在线时明确降级。
+      if (req.method === 'POST' && (key === 'follow/sessions' || key === 'follow')) {
+        if (req.headers.origin !== origin) { res.writeHead(403).end(); return; }
+        const host = await loadHostBridge(config.configDir);
+        if (!host) { res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' })); return; }
+        if (key === 'follow/sessions') {
+          try {
+            const response = await fetch(`${host.url}/follow/sessions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${host.token}` },
+              body: '{}',
+              signal: AbortSignal.timeout(5000),
+            });
+            const text = await response.text();
+            res.writeHead(response.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(text);
+          } catch {
+            res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' }));
+          }
+          return;
+        }
+        const body = await readJsonBody(req, REQUEST_LIMITS.chat);
+        if (body.tooLarge) { res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8', Connection: 'close' }).end(JSON.stringify({ error: 'payload-too-large' })); return; }
+        if (body.invalid) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'invalid-json' })); return; }
+        const controller = new AbortController();
+        const onClose = () => { if (!controller.signal.aborted) controller.abort(); };
+        req.on('close', onClose); res.on('close', onClose);
+        try {
+          const proxied = await proxyHostStream({ res, host, path: '/follow', body: JSON.stringify({ sessionId: body.value?.sessionId }), signal: controller.signal, timeoutMs: 60000 });
+          if (!proxied) { res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' })); }
+        } finally {
+          req.off('close', onClose); res.off('close', onClose);
+          try { if (!res.writableEnded) res.end(); } catch { /* 已断开 */ }
+        }
+        return;
       }
       // 对话：POST + SSE。backend=simulated 走本地仿真；backend=host 先转发 Host 桥接，
       // 失败则降级为本地模拟并在 meta 帧里标记 degraded（不影响动画与互动）。

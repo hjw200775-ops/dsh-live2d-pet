@@ -12,7 +12,7 @@ test('插件不把 llm 设为强制依赖，桥接启动失败也不影响其他
   assert.match(source, /export const inject = \['webServer', 'credentials'\]/);
   assert.doesNotMatch(source, /inject\s*=\s*\[[^\]]*'llm'/);
   // 桥接启动被 try/catch 包住，失败只记日志
-  assert.match(source, /try\{[\s\S]{0,200}startHostBridge/);
+  assert.match(source, /try\{[\s\S]{0,500}startHostBridge/);
   assert.match(source, /host bridge 未启动/);
   // 卸载时关闭桥接
   assert.match(source, /hostBridge\?\.close/);
