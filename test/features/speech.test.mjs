@@ -168,3 +168,22 @@ test('Follow 与 Pet 隔离：Follow 不经过语音队列（源码契约）', a
   assert.equal(followBlock.includes('speechQueue'), false, 'Follow 不得调用语音队列');
   assert.match(viewer, /speechQueue\.enqueue\(full,\{id:Date\.now\(\),source:'pet'\}\)/);
 });
+
+test('RMS 与播放状态一致：播放中上报，停止后归零', async () => {
+  const state = createSpeechState();
+  const levels = [];
+  state.on('rms', event => levels.push(event.rms));
+  const sink = {
+    play(audio, meta) { meta.onLevel(0.7); meta.onLevel(0.2); meta.onEnded(); },
+    stop() { /* 由 player 归零 */ },
+    dispose() {},
+  };
+  const player = createAudioPlayer({ sink, state });
+  state.set('speaking');
+  await player.play(makeSilenceWav());
+  player.stop();
+  assert.equal(levels[0], 0.7);
+  assert.equal(levels[1], 0.2);
+  assert.equal(levels.at(-1), 0);
+  assert.equal(state.state, 'speaking', '播放器不改状态机，由队列负责');
+});

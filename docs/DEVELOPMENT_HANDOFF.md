@@ -1038,3 +1038,71 @@ GUI：**28 项通过**（新增语音控件默认关闭、启用后状态明确�
 3. 口型同步只定义契约，实际嘴部驱动由主机 Codex 后续接入。
 4. 模拟音频是正弦波，不是人声；只能验证管线，不能验证听感。
 5. 语音状态与聊天取消是"同源"的，但网络延迟下仍可能出现极短的尾音。
+## 30. 第八阶段第三部分：真实离线 TTS 引擎适配预研
+
+### 30.1 运行环境结论（本机实测）
+
+| 项 | 结果 |
+| --- | --- |
+| 开发 Node | `v26.13.0`，win32 x64，ABI 147 |
+| DSH Runtime | CLI 通过 `ELECTRON_RUN_AS_NODE=1` 启动 Electron 内置 Node（约 20.x），**不是系统 Node** |
+| sherpa-onnx-node | npm 最新 `2.0.1`；基于 Node-Addon-API（N-API），官方声明最低 Node 16；可选依赖自带 `sherpa-onnx-win-x64@2.0.1`（约 22 MB 解包） |
+| 是否已安装 | **未安装**（`npm ls` 为空）；本机也没有任何 `.onnx` TTS 模型 |
+| 结论 | 建议 **sidecar 运行在 Host 的 Node/Electron-as-Node 进程**，不放进渲染器；N-API 对 Node 版本较宽容，但 Electron 渲染进程的 ABI/沙箱仍不适合 |
+
+> 本轮没有执行 `npm install sherpa-onnx-node`，也没有下载任何模型；只用 sidecar 的 fake 模式与 Fake Provider 做接口验收。
+
+### 30.2 声线候选（未下载、未加入仓库）
+
+| 候选 | 语言 | 体积 | 前端依赖 | 许可 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| **Kokoro multi-lang v1.1**（[文档](https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html)） | 中 + 英（官方）；含 `jf_*` 日文女声 | fp32 `model.onnx` 310 MB；int8 约 100 MB；`voices.bin` 26 MB | `espeak-ng-data`、`lexicon-us-en.txt`、`lexicon-zh.txt`、`tokens.txt`（数字/日期可选 FST） | 上游 `hexgrad/Kokoro-82M` 为 Apache-2.0；随包 LICENSE 需再核对 | 103 声线，中文女声 `zf_xiaobei/xiaoni/xiaoxiao/xiaoyi`；采样率 24 kHz；中英混读表现好，适合亲切女声；日文需实测 |
+| **VITS 中文** `vits-zh-hf-fanchen-C` / `theresa` / `vits-melo-tts-zh_en` | 中（melo 为中英） | 116–163 MB | lexicon + tokens（melo 另有 dict/FST） | 各模型卡不同（HF 上游/训练集限制），**必须逐模型确认商用** | 单/多声线；fanchen-C 有 187 声线；melo 支持中英混读、44.1 kHz |
+| **日文** | 日 | 取决于模型 | 需日文词典/espeak | 需逐个核对 | 官方文档只声明 Kokoro 中英；`jf_alpha/jf_gongitsune/jf_nezumi/jf_tebukuro` 在 v1.1 声线表中，**是否稳定支持需实测** |
+
+试听：sherpa 官方文档页内嵌各声线 wav（Kokoro / VITS 页面），HuggingFace Space `k2-fsa/text-to-speech` 可在线试听。
+
+### 30.3 SherpaTTSProvider 架构
+
+```
+SpeechQueue（不变）
+  → SherpaTTSProvider.synthesize(text, {voice,speed,language}, signal)
+      → transport.request({type:'synthesize',...})
+          → 独立 Node sidecar（stdin/stdout JSON 行）
+              → sherpa-onnx-node（仅 sidecar 加载原生 addon）
+  ← {format:'pcm', sampleRate, data:Uint8Array}
+```
+
+- `load()`：ping sidecar，失败返回 `MODEL_MISSING` / `SHERPA_UNAVAILABLE`，可重试；
+- `unload()` / `close()`：关闭 sidecar，子进程退出后所有 pending 请求以 `SIDECAR_EXITED` 清理；
+- 取消：`AbortSignal` → `ABORTED`，同时向 sidecar 发 `cancel`；
+- 失败回退：`createFallbackTtsProvider` 在不可用时自动改用 Mock，并标记 `degraded`；
+- 安全：sidecar 只从环境变量读模型目录，**不接受客户端路径**；`spawn` 固定 `node + sidecar`，`shell:false`；
+  不记录 sidecar stderr、正文或模型路径。
+
+### 30.4 口型接口（不变）
+
+`statechange` 与 `rms: {rms, at}` 保持原契约；播放停止/取消/出错时 RMS 归零；不修改 Live2D 参数。
+
+### 30.5 验收与测试
+
+`npm test`：**319 / 319 通过**（+10）：provider 文本/声线/语速校验、加载失败重试、取消、失败回退 Mock、
+错误码白名单、真实子进程 fake 合成、缺原生库返回 `SHERPA_UNAVAILABLE`、sidecar 协议、队列串行 + 停止 RMS 归零、
+RMS 与播放状态一致。
+
+GUI：28 项保持通过（本轮无 UI 变更）。
+
+### 30.6 需要用户批准后才能做的事
+
+1. `npm install sherpa-onnx-node`（约 22 MB 原生包，Windows x64）；
+2. 下载 TTS 模型（Kokoro int8 约 100 MB / 完整 310 MB，或 VITS 中文约 116–163 MB）；
+3. 确认声线（Kokoro `zf_xiaoxiao` / VITS fanchen-C / 日文 `jf_*`）；
+4. 确认模型许可是否允许随插件分发（若不允许，只能用户自行下载并放到指定目录）。
+
+### 30.7 遗留风险
+
+1. 未实测 Electron 内置 Node 加载 N-API addon 的兼容性（需批准安装后验证）。
+2. 日文声线未实测，官方只声明中英。
+3. 模型许可未逐一审查，不能默认商用/可分发。
+4. 首次合成延迟与内存占用需在目标机器实测。
+5. 真实引擎接入前，`fallback` 会把所有失败静默降级为 Mock（会记录 `degraded`，但用户可能听不出差别）。
