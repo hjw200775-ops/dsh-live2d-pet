@@ -44,7 +44,7 @@ node tools/gui-check/run.mjs `
 > `ELECTRON_RUN_AS_NODE` 会被脚本显式删除：该变量存在时 `electron.exe` 会退化成普通 Node，
 > `import 'electron'` 直接抛 `Cannot read properties of undefined (reading 'exports')`。
 
-## 覆盖的 22 项检查
+## 覆盖的 24 项检查
 
 1. 窗口加载并暴露 `__dshDesktopReady` / `__dshInteraction`
 2. **存档迁移**：旧 `preferences.json` 复制成 `preferences.desktop.json`，旧文件保持原样
@@ -65,9 +65,11 @@ node tools/gui-check/run.mjs `
 17. **关闭对话后输入被禁用并提示未启用**
 18. 重启后互动配置保留
 19. 重启后面板回显已保存的中文气泡
-20. **跟随控件存在且默认关闭**
-21. **无 DSH Host 时跟随明确降级且不报错**
-22. 清理后窗口关闭、调试端口释放
+20. **角色描述与清空上下文控件存在**
+21. **角色描述写入存档**
+22. **跟随控件存在且默认关闭**
+23. **无 DSH Host 时跟随明确降级且不报错**
+24. 清理后窗口关闭、调试端口释放
 
 报告写入 `<workdir>\report.json`（`{ ok, timedOut, checks[], workdir, ports[], at }`），日志同目录 `desktop.log`。
 

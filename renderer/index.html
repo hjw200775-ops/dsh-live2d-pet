@@ -56,6 +56,9 @@
     </select>
     <label class="warn"><input id="chat-consent" type="checkbox"> 允许真实模型调用（可能产生费用）</label>
     <p id="chat-warning" hidden>真实模式还需 Host 侧开启 DSH_LIVE2D_CHAT_REAL=1 并经人工审批；未满足前不会发起真实请求。</p>
+    <label for="chat-persona">角色描述（仅影响语气，最多 200 字）</label>
+    <input id="chat-persona" type="text" maxlength="200" placeholder="例如：简洁、温和、带点俏皮" aria-label="角色描述">
+    <button id="chat-clear" type="button">清空对话上下文</button>
     <input id="chat-input" type="text" maxlength="500" placeholder="想对她说点什么…" aria-label="对话输入">
     <div class="chat-actions">
       <button id="chat-send" type="button">发送</button>

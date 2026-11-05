@@ -135,8 +135,8 @@ test('渲染器：先保存后订阅、代际防旧请求、有限退避重连�
   assert.match(viewer, /if\(follow\.sessionId!==followUI\.session\.value\)return;/);
   assert.match(viewer, /const generation=\+\+followGeneration/);
   assert.match(viewer, /followGeneration\+\+;followAbort\?\.abort\(\)/);
-  assert.match(viewer, /FOLLOW_MAX_RETRIES=5/);
-  assert.match(viewer, /followBackoff/);
+  assert.match(viewer, /followRetryAfterDisconnect/);
+  assert.match(viewer, /connectedMs:followConnectedAt/);
   assert.match(viewer, /followUserStopped\|\|generation!==followGeneration/);
   assert.match(viewer, /if\(follow\.hideContent\)\{setFollowState\('收到一条新回复（已按设置隐藏）'\)/);
 

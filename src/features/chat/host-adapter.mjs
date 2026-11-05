@@ -101,9 +101,9 @@ function nextOrAbort(iterator, signal) {
  * - 未知 finish.kind 判为 UNKNOWN_FINISH；
  * - 取消后不再等待不响应取消的上游，最多等 ABORT_GRACE_MS 做收尾。
  */
-export async function* streamHostChat({ llm, provider, model, messages, signal, tools }) {
+export async function* streamHostChat({ llm, provider, model, messages, system, signal, tools }) {
   if (typeof llm?.stream !== 'function') throw new HostChatError('Host 未提供模型服务', 'NO_LLM_SERVICE');
-  const iterator = llm.stream({ provider, model, messages, signal, ...(tools ? { tools } : {}) })[Symbol.asyncIterator]();
+  const iterator = llm.stream({ provider, model, messages, signal, ...(system ? { system } : {}), ...(tools ? { tools } : {}) })[Symbol.asyncIterator]();
   let settled = false;
   try {
     for (;;) {

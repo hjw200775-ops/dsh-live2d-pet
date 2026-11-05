@@ -193,9 +193,16 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
   })()`);
   check('互动设置区存在且控件齐全', panel.has && panel.inputs >= 7, JSON.stringify(panel));
 
-  const points = await evaluate(`(()=>{const w=innerWidth,h=innerHeight;const pick=(ratio)=>{for(let y=Math.round(h*ratio);y<h;y+=8)for(let x=Math.round(w*0.2);x<w*0.8;x+=8)if(window.__dshHit(x,y))return {x,y};return null;};
+  // 模型纹理加载完成前命中缓存是空的：轮询等待，避免误报失败。
+  const probe = () => evaluate(`(()=>{const w=innerWidth,h=innerHeight;const pick=(ratio)=>{for(let y=Math.round(h*ratio);y<h;y+=8)for(let x=Math.round(w*0.2);x<w*0.8;x+=8)if(window.__dshHit(x,y))return {x,y};return null;};
     return {head:pick(0.18),body:pick(0.62)};})()`);
-  check('找到头部与身体命中点', !!points.head && !!points.body, JSON.stringify(points));
+  let points = null;
+  for (let i = 0; i < 40; i++) {
+    points = await probe().catch(() => null);
+    if (points?.head && points?.body) break;
+    await sleep(250);
+  }
+  check('找到头部与身体命中点', !!points?.head && !!points?.body, JSON.stringify(points));
 
   const click = async (point, times = 1, gap = 120) => {
     await evaluate(`(()=>{window.__bubbleHits=0;const b=document.getElementById('bubble');window.__bubbleObs?.disconnect();window.__bubbleObs=new MutationObserver(()=>{window.__bubbleHits++;});window.__bubbleObs.observe(b,{childList:true,characterData:true,attributes:true,subtree:true});})()`);
@@ -239,6 +246,15 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
 
   await evaluate(`(()=>{window.fetch=window.__realFetch;const c=document.getElementById('interaction-body');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(1200);
+  // ---- 角色人格与上下文 ----
+  const personaBoot = await evaluate(`({ hasPersona:!!document.getElementById('chat-persona'), maxLength:document.getElementById('chat-persona')?.maxLength, hasClear:!!document.getElementById('chat-clear'), clearDisabled:document.getElementById('chat-clear')?.disabled })`);
+  check('角色描述与清空上下文控件存在', personaBoot.hasPersona === true && personaBoot.maxLength === 200 && personaBoot.hasClear === true, JSON.stringify(personaBoot));
+
+  await evaluate(`(()=>{const i=document.getElementById('chat-persona');i.value='温和一点，回答简短';i.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  await sleep(800);
+  const personaDisk = JSON.parse(await readFile(path.join(workdir, 'preferences.desktop.json'), 'utf8'));
+  check('角色描述写入存档', personaDisk.chat?.persona === '温和一点，回答简短', JSON.stringify(personaDisk.chat?.persona));
+
   // ---- 跟随开发会话（只读）----
   const followBoot = await evaluate(`({ enabled:document.getElementById('follow-enabled').checked, hasSelect:!!document.getElementById('follow-session'), state:document.getElementById('follow-state').textContent })`);
   check('跟随控件存在且默认关闭', followBoot.enabled === false && followBoot.hasSelect === true && followBoot.state.includes('未启用'), JSON.stringify(followBoot));

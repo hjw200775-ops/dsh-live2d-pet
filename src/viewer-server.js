@@ -238,6 +238,24 @@ export async function startViewer(config) {
         else telemetry={mode:['idle','thinking','answering','error'].includes(input.mode)?input.mode:'idle',frames:Number(input.frames)||0,zoom:Number(input.zoom)||1,x:Number(input.x)||0,y:Number(input.y)||0,expression:String(input.expression||'').slice(0,40),motion:String(input.motion||'').slice(0,40),at:Date.now()};
         res.writeHead(204).end();return;
       }
+      // 清空 Pet 上下文：只转发给 Host 内存，不落盘。
+      if (req.method === 'POST' && key === 'chat/context/clear') {
+        if (req.headers.origin !== origin) { res.writeHead(403).end(); return; }
+        const host = await loadHostBridge(config.configDir);
+        if (!host) { res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' })); return; }
+        try {
+          const response = await fetch(`${host.url}/chat/context/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${host.token}` },
+            body: '{}',
+            signal: AbortSignal.timeout(3000),
+          });
+          res.writeHead(response.status, { 'Cache-Control': 'no-store' }).end();
+        } catch {
+          res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' }));
+        }
+        return;
+      }
       // Follow（只读陪伴）：会话列表与事件流都转发 Host；Host 不在线时明确降级。
       if (req.method === 'POST' && (key === 'follow/sessions' || key === 'follow')) {
         if (req.headers.origin !== origin) { res.writeHead(403).end(); return; }

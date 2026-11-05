@@ -7,6 +7,8 @@ import {
   followStatusFrame,
   sanitizeSessionList,
   truncateFollowText,
+  followRetryAfterDisconnect,
+  FOLLOW_STABLE_MS,
 } from '../../src/features/chat/follow.mjs';
 import { defaultFollowPreferences, sanitizeFollowPreferences } from '../../src/features/chat/config.mjs';
 
@@ -94,4 +96,16 @@ test('follow 配置默认关闭且会话 id 受长度限制', () => {
   assert.equal(sanitizeFollowPreferences({ hideContent: 'yes' }).hideContent, false);
   assert.equal(sanitizeFollowPreferences({ enabled: 'yes' }).enabled, false);
   assert.equal(sanitizeFollowPreferences({ sessionId: 'x'.repeat(500) }).sessionId.length, 120);
+});
+
+test('只有稳定连接 ≥60s 才清零重试计数；短连接断开只累加', () => {
+  assert.equal(FOLLOW_STABLE_MS, 60000);
+  assert.deepEqual(followRetryAfterDisconnect({ connectedMs: 1000, retries: 0 }), { retries: 1, giveUp: false, delayMs: 1000, stable: false });
+  assert.deepEqual(followRetryAfterDisconnect({ connectedMs: 3000, retries: 2 }), { retries: 3, giveUp: false, delayMs: 4000, stable: false });
+  // 稳定连接后即使之前失败 4 次，也回到第 1 次
+  assert.deepEqual(followRetryAfterDisconnect({ connectedMs: 61000, retries: 4 }), { retries: 1, giveUp: false, delayMs: 1000, stable: true });
+  // 达到上限
+  assert.equal(followRetryAfterDisconnect({ connectedMs: 1000, retries: 5 }).giveUp, true);
+  // 上限后给出退避 0
+  assert.equal(followRetryAfterDisconnect({ connectedMs: 1000, retries: 9 }).delayMs, 0);
 });

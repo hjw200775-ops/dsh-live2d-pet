@@ -14,6 +14,7 @@ import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
 import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText, doubleClickFallbackKind, shouldFireFeedback } from './features/interaction-preferences.mjs';
 import { defaultChatPreferences, sanitizeChatPreferences, CHAT_LIMITS, defaultFollowPreferences, sanitizeFollowPreferences } from './features/chat/config.mjs';
+import { followRetryAfterDisconnect } from './features/chat/follow.mjs';
 import { createSseParser } from './features/chat/sse.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
@@ -213,6 +214,8 @@ import { createSseParser } from './features/chat/sse.mjs';
       backend:document.getElementById('chat-backend'),
       consent:document.getElementById('chat-consent'),
       warning:document.getElementById('chat-warning'),
+      persona:document.getElementById('chat-persona'),
+      clear:document.getElementById('chat-clear'),
       input:document.getElementById('chat-input'),
       send:document.getElementById('chat-send'),
       stop:document.getElementById('chat-stop'),
@@ -226,7 +229,9 @@ import { createSseParser } from './features/chat/sse.mjs';
       chatUI.backend.value=chat.backend;
       chatUI.consent.checked=chat.realConsent===true;
       chatUI.warning.hidden=chat.backend!=='host';
+      chatUI.persona.value=chat.persona||'';
       const active=chat.enabled;
+      chatUI.clear.disabled=!active;
       chatUI.input.disabled=!active;chatUI.send.disabled=!active;
       chatUI.stop.disabled=!chatAbort;
       setChatState(active
@@ -293,6 +298,16 @@ import { createSseParser } from './features/chat/sse.mjs';
       chatUI.mode.addEventListener('change',()=>{stopChat();applyChat({mode:chatUI.mode.value});});
       chatUI.backend.addEventListener('change',()=>{stopChat();applyChat({backend:chatUI.backend.value});});
       chatUI.consent.addEventListener('change',()=>applyChat({realConsent:chatUI.consent.checked}));
+      chatUI.persona.addEventListener('change',()=>applyChat({persona:chatUI.persona.value}));
+      chatUI.clear.addEventListener('click',async()=>{
+        try{
+          const response=await fetch('chat/context/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+          if(!response.ok)throw new Error(`HTTP ${response.status}`);
+          setChatState('对话上下文已清空（不会影响已显示的气泡）');
+        }catch(error){
+          setChatState('清空上下文失败：'+(error.message||'host-unavailable'),true);
+        }
+      });
       chatUI.send.addEventListener('click',()=>{void sendChat();});
       chatUI.stop.addEventListener('click',stopChat);
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});
@@ -311,10 +326,10 @@ import { createSseParser } from './features/chat/sse.mjs';
     let followGeneration=0;
     let followRetryTimer=0;
     let followRetries=0;
+    let followConnectedAt=0;
     let followUserStopped=false;
     const followSeen=new Set();
-    const FOLLOW_MAX_RETRIES=5;
-    const followBackoff=attempt=>Math.min(15000,1000*2**Math.max(0,attempt));
+
     const setFollowState=(text,isError=false)=>{if(!followUI.state)return;followUI.state.textContent=text;followUI.state.classList.toggle('error',isError);};
     const paintFollowPanel=()=>{
       if(!followUI.enabled)return;
@@ -352,7 +367,7 @@ import { createSseParser } from './features/chat/sse.mjs';
       clearFollowRetry();
       followAbort?.abort();
       const controller=new AbortController();
-      followAbort=controller;followSeen.clear();
+      followAbort=controller;followSeen.clear();followConnectedAt=0;
       if(!auto){followRetries=0;followUserStopped=false;}
       paintFollowPanel();
       try{
@@ -364,9 +379,10 @@ import { createSseParser } from './features/chat/sse.mjs';
         const parser=createSseParser({onFrame:({data})=>{
           if(generation!==followGeneration)return;
           let payload;try{payload=JSON.parse(data);}catch{return;}
-          if(payload?.type==='follow-ready'){followRetries=0;setFollowState('正在跟随所选会话（只读）');return;}
-          if(payload?.type==='follow-status'){setFollowState(payload.status==='running'?'该会话正在运行':'该会话空闲');return;}
+          if(payload?.type==='follow-ready'){followConnectedAt=Date.now();setFollowState('正在跟随所选会话（只读）');return;}
+          if(payload?.type==='follow-status'){if(followConnectedAt&&Date.now()-followConnectedAt>=60000)followRetries=0;setFollowState(payload.status==='running'?'该会话正在运行':'该会话空闲');return;}
           if(payload?.type==='follow-message'){
+            if(followConnectedAt&&Date.now()-followConnectedAt>=60000)followRetries=0;
             if(Number.isInteger(payload.seq)){if(followSeen.has(payload.seq))return;followSeen.add(payload.seq);}
             if(chatAbort){setFollowState('Pet 对话进行中，跟随内容暂不弹出');return;}
             if(follow.hideContent){setFollowState('收到一条新回复（已按设置隐藏）');return;}
@@ -381,12 +397,13 @@ import { createSseParser } from './features/chat/sse.mjs';
       }catch(error){
         if(followUserStopped||generation!==followGeneration)return;
         if(controller.signal.aborted)return;
-        if(followRetries<FOLLOW_MAX_RETRIES){
-          const delay=followBackoff(followRetries++);
-          setFollowState(`连接中断，${Math.ceil(delay/1000)} 秒后第 ${followRetries} 次重连…`,true);
-          followRetryTimer=setTimeout(()=>{if(follow.enabled&&follow.sessionId)void startFollow({auto:true});},delay);
-        }else{
+        const decision=followRetryAfterDisconnect({connectedMs:followConnectedAt?Date.now()-followConnectedAt:0,retries:followRetries});
+        followRetries=decision.retries;
+        if(decision.giveUp){
           setFollowState('连接多次失败，已停止自动重连；可重新选择会话或重启 DSH',true);
+        }else{
+          setFollowState(`连接中断，${Math.ceil(decision.delayMs/1000)} 秒后第 ${followRetries} 次重连…`,true);
+          followRetryTimer=setTimeout(()=>{if(follow.enabled&&follow.sessionId)void startFollow({auto:true});},decision.delayMs);
         }
       }finally{
         if(followAbort===controller){followAbort=null;paintFollowPanel();}

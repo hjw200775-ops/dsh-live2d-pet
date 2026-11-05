@@ -9,6 +9,8 @@ import { safeCode, writeChatStream } from './stream.mjs';
 import { streamHostChat } from './host-adapter.mjs';
 import { authorizeFollow, authorizeRealChat } from './authorization.mjs';
 import { createFollowDeduper, followFrameFromEvent, followStatusFrame } from './follow.mjs';
+import { createPetConversation } from './conversation.mjs';
+import { buildPetMessages } from './persona.mjs';
 
 export const HOST_BRIDGE_FILE = 'host-bridge.json';
 export const HOST_BRIDGE_PROTOCOL = 'dsh-live2d-host-bridge/1';
@@ -66,6 +68,7 @@ export async function startHostBridge({
   let busy = false;
   let closing = false;
   const active = new Set();
+  const conversation = createPetConversation();
   let followBusy = false;
   const followControllers = new Set();
   let aclRestricted = true;
@@ -73,7 +76,7 @@ export async function startHostBridge({
 
   const server = createServer(async (req, res) => {
     try {
-      if (req.method !== 'POST' || !['/chat', '/follow', '/follow/sessions'].includes(req.url)) { res.writeHead(404).end(); return; }
+      if (req.method !== 'POST' || !['/chat', '/chat/context/clear', '/follow', '/follow/sessions'].includes(req.url)) { res.writeHead(404).end(); return; }
       if (req.headers.authorization !== `Bearer ${token}`) {
         res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'unauthorized' }));
         return;
@@ -83,6 +86,13 @@ export async function startHostBridge({
         res.writeHead(403).end();
         return;
       }
+      // 清空 Pet 上下文：只影响 Host 内存，不触及聊天正文或日志。
+      if (req.url === '/chat/context/clear') {
+        conversation.clear();
+        res.writeHead(204, { 'Cache-Control': 'no-store' }).end();
+        return;
+      }
+
       // Follow 会话列表：只读、只走官方 sessionController.list()
       if (req.url === '/follow/sessions') {
         const sessions = sessionSource ? await sessionSource.list() : [];
@@ -171,14 +181,34 @@ export async function startHostBridge({
         if (auth.ok) {
           const model = auth.model;
           log('[live2d] host chat backend=host-llm source=' + (model?.source || 'unknown'));
-          await writeChatStream({
-            res, prompt: message.text, mode, signal: controller.signal, timeoutMs, scenario,
-            backend: 'host-llm', model: `${model.provider}/${model.model}`,
-            produce: ({ signal }) => streamHostChat({
-              llm, provider: model.provider, model: model.model, signal,
-              messages: [{ role: 'user', content: [{ type: 'text', text: message.text }] }],
-            }),
+          const built = buildPetMessages({
+            persona: auth.chat.persona,
+            history: conversation.history('host-llm'),
+            userText: message.text,
+            historyTurns: auth.chat.historyTurns,
           });
+          const turn = conversation.begin(message.text, 'host-llm');
+          let assistantText = '';
+          let outcome = 'error';
+          try {
+            outcome = (await writeChatStream({
+              res, prompt: message.text, mode, signal: controller.signal, timeoutMs, scenario,
+              backend: 'host-llm', model: `${model.provider}/${model.model}`,
+              produce: ({ signal }) => (async function* () {
+                for await (const chunk of streamHostChat({
+                  llm, provider: model.provider, model: model.model, signal,
+                  messages: built.messages, system: built.system,
+                })) {
+                  if (chunk.kind === 'delta' && chunk.text) assistantText += chunk.text;
+                  yield chunk;
+                }
+              })(),
+            })).outcome;
+          } finally {
+            // 只有成功完成才提交；取消、超时、错误、空流都不入历史。
+            if (outcome === 'ok' && assistantText.trim()) conversation.commit(turn, assistantText);
+            else conversation.abort(turn);
+          }
         } else {
           log('[live2d] host chat backend=simulated reason=' + (auth.reasons[0] || 'none'));
           await writeChatStream({ res, prompt: message.text, mode, signal: controller.signal, timeoutMs, scenario, backend: 'simulated', model: 'local-simulator' });

@@ -88,3 +88,19 @@ export function sanitizeSessionList(value) {
   }
   return list;
 }
+
+/** 连接持续这么久才算稳定，允许把连续失败计数清零。 */
+export const FOLLOW_STABLE_MS = 60000;
+
+/**
+ * 断线后的重连决策：
+ * - 稳定连接（≥60s）后清零失败计数，再按第 1 次算；
+ * - 未稳定就断开，累加失败次数，不会因为"连上又立刻断"无限重试；
+ * - 达到上限返回 giveUp。
+ */
+export function followRetryAfterDisconnect({ connectedMs = 0, retries = 0, maxRetries = 5 } = {}) {
+  const stable = connectedMs >= FOLLOW_STABLE_MS;
+  const base = stable ? 0 : Math.max(0, Number(retries) || 0);
+  if (base >= maxRetries) return { retries: base, giveUp: true, delayMs: 0, stable };
+  return { retries: base + 1, giveUp: false, delayMs: Math.min(15000, 1000 * 2 ** base), stable };
+}
