@@ -66,6 +66,14 @@
     </div>
     <p id="chat-state">所有回复都来自本地假模型，未接入真实 AI</p>
   </div>
+  <p class="section">语音（TTS）</p>
+  <div id="speech">
+    <label><input id="speech-enabled" type="checkbox"> 启用语音（默认关闭，当前为离线模拟音频）</label>
+    <label><input id="speech-muted" type="checkbox"> 静音</label>
+    <label for="speech-volume">音量</label>
+    <input id="speech-volume" type="range" min="0" max="100" step="1" value="80">
+    <p id="speech-state">语音未启用：不会播放任何音频</p>
+  </div>
   <p class="section">跟随开发会话（只读）</p>
   <div id="follow">
     <label><input id="follow-enabled" type="checkbox"> 启用跟随（只读，默认关闭）</label>

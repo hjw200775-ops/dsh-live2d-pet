@@ -13,13 +13,18 @@ import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
 import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText, doubleClickFallbackKind, shouldFireFeedback } from './features/interaction-preferences.mjs';
-import { defaultChatPreferences, sanitizeChatPreferences, CHAT_LIMITS, defaultFollowPreferences, sanitizeFollowPreferences } from './features/chat/config.mjs';
+import { defaultChatPreferences, sanitizeChatPreferences, CHAT_LIMITS, defaultFollowPreferences, sanitizeFollowPreferences, defaultSpeechPreferences, sanitizeSpeechPreferences } from './features/chat/config.mjs';
 import { followRetryAfterDisconnect } from './features/chat/follow.mjs';
+import { createChatSettings } from './features/chat/chat-settings.mjs';
+import { createSpeechState } from './features/speech/state.mjs';
+import { createMockTtsProvider } from './features/speech/provider.mjs';
+import { createSpeechQueue } from './features/speech/queue.mjs';
+import { createAudioPlayer } from './features/speech/player.mjs';
 import { createSseParser } from './features/chat/sse.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
-  let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),chat=defaultChatPreferences(),follow=defaultFollowPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
+  let preferences={version:1,model:{zoom:1,x:0,y:0}},interaction=defaultInteractionPreferences(),chat=defaultChatPreferences(),follow=defaultFollowPreferences(),speech=defaultSpeechPreferences(),zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
   const saveState=document.getElementById('save-state');
   let saveStateTimer;
   let chatAbort=null;
@@ -77,6 +82,7 @@ import { createSseParser } from './features/chat/sse.mjs';
     interaction=sanitizeInteractionPreferences(preferences.interaction);
     chat=sanitizeChatPreferences(preferences.chat);
     follow=sanitizeFollowPreferences(preferences.follow);
+    speech=sanitizeSpeechPreferences(preferences.speech);
     ({zoom=1,x=0,y=0}=preferences.model||{});
     parent.postMessage({type:'dsh-live2d/ready',overlay:preferences.overlay},'*');
     const script=src=>new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>reject(new Error(`无法加载 ${src}`));document.head.append(s);});
@@ -240,12 +246,28 @@ import { createSseParser } from './features/chat/sse.mjs';
           :(chat.mode==='follow'?'本地模拟：跟随示例消息':'本地模拟：本地假模型回复'))
         :'对话未启用；所有回复都是模拟内容');
     };
-    // 返回保存是否成功：真实调用前必须先确认配置已落盘（Host 每次请求都读存档）。
-    const applyChat=patch=>{chat=sanitizeChatPreferences(patch,chat);preferences.chat=chat;paintChat();return persist();};
-    const stopChat=()=>{chatAbort?.abort();};
+    let realRevocationUnsaved=false;
+    // 版本化 + 串行化：旧保存不会覆盖新设置；失败时完整回滚 chat/preferences/UI。
+    const chatStore=createChatSettings({
+      initial:chat,
+      save:async next=>{preferences.chat=next;chat=next;paintChat();return persist();},
+    });
+    const applyChat=async patch=>{
+      const revoking=chat.realConsent===true&&patch.realConsent===false;
+      const result=await chatStore.update(patch);
+      chat=result.chat;preferences.chat=chat;paintChat();
+      if(!result.ok){
+        if(revoking){realRevocationUnsaved=true;setChatState('撤销真实许可保存失败：磁盘上可能仍是旧授权；已阻止新的真实请求',true);}
+        return false;
+      }
+      realRevocationUnsaved=false;
+      return true;
+    };
+    const stopChat=()=>{chatAbort?.abort();speechQueue.stop();};
     const sendChat=async()=>{
       if(chatAbort||!chat.enabled)return;
-      if(chat.backend==='host'&&chat.realConsent!==true){setChatState('真实调用许可未开启，未发送',true);return;}
+      if(chatStore.saving){setChatState('设置正在保存，请稍候再发送',true);return;}
+      if(chat.backend==='host'&&(chat.realConsent!==true||realRevocationUnsaved)){setChatState(realRevocationUnsaved?'撤销许可尚未保存成功，已阻止真实请求':'真实调用许可未开启，未发送',true);return;}
       const text=chatUI.input.value.trim();
       if(!text){setChatState('先说点什么吧',true);return;}
       if([...text].length>CHAT_LIMITS.messageChars){setChatState(`最多 ${CHAT_LIMITS.messageChars} 个字`,true);return;}
@@ -288,7 +310,10 @@ import { createSseParser } from './features/chat/sse.mjs';
         else if(failure)setChatState(failure==='timeout'?'超时了，已停止':`生成失败：${failure}`,true);
         else if(!deltas)setChatState('没有收到内容（空流）',true);
         else if(!ended)setChatState('流意外结束（缺少结束事件）',true);
-        else setChatState(`回复完成（${degraded?'已降级为本地模拟':backend==='host-llm'?'DSH 模型':'本地模拟'}）`);
+        else {
+          setChatState(`回复完成（${degraded?'已降级为本地模拟':backend==='host-llm'?'DSH 模型':'本地模拟'}）`);
+          if(speech.enabled&&full.trim())speechQueue.enqueue(full,{id:Date.now(),source:'pet'});
+        }
       }catch(error){
         if(controller.signal.aborted&&failure!=='timeout')setChatState('已停止生成');
         else setChatState(failure==='timeout'?'超时了，已停止':`发送失败：${error.message}`,true);
@@ -338,7 +363,94 @@ import { createSseParser } from './features/chat/sse.mjs';
       chatUI.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void sendChat();}});
       window.__dshChat=()=>({enabled:chat.enabled,mode:chat.mode,busy:!!chatAbort,backend,degraded,config:{...chat}});
       paintChat();
-    }    // —— 跟随开发会话（只读）：用户显式选择、先保存后订阅、断线有限重连 ——
+    }    function createWebAudioSink() {
+      let ctx = null, source = null, raf = 0, ended = null;
+      const finish = () => { const fn = ended; ended = null; try { fn?.(); } catch { /* 忽略 */ } };
+      return {
+        play(audio, { volume = 1, onLevel, onEnded } = {}) {
+          ended = onEnded;
+          try {
+            ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+            if (ctx.state === 'suspended') void ctx.resume();
+            ctx.decodeAudioData(audio.data.buffer.slice(0)).then(buffer => {
+              source = ctx.createBufferSource();
+              source.buffer = buffer;
+              const gain = ctx.createGain();
+              gain.gain.value = volume;
+              const analyser = ctx.createAnalyser();
+              analyser.fftSize = 256;
+              source.connect(gain).connect(analyser).connect(ctx.destination);
+              const data = new Uint8Array(analyser.fftSize);
+              const tick = () => {
+                analyser.getByteTimeDomainData(data);
+                let sum = 0;
+                for (const value of data) { const x = (value - 128) / 128; sum += x * x; }
+                onLevel?.(Math.sqrt(sum / data.length));
+                raf = requestAnimationFrame(tick);
+              };
+              source.onended = () => { cancelAnimationFrame(raf); onLevel?.(0); source = null; finish(); };
+              source.start(); tick();
+            }).catch(() => { finish(); });
+          } catch { finish(); }
+        },
+        stop() {
+          cancelAnimationFrame(raf);
+          try { source?.stop(); } catch { /* 忽略 */ }
+          source = null;
+          ended?.(); ended = null;
+        },
+        dispose() {
+          this.stop();
+          try { void ctx?.close(); } catch { /* 忽略 */ }
+          ctx = null;
+        },
+      };
+    }
+
+    // —— 语音（TTS）：默认关闭；离线模拟音频；只发 RMS 数值，不改 Live2D 参数 ——
+    const speechUI={
+      enabled:document.getElementById('speech-enabled'),
+      muted:document.getElementById('speech-muted'),
+      volume:document.getElementById('speech-volume'),
+      state:document.getElementById('speech-state'),
+    };
+    const speechState=createSpeechState();
+    const speechSink=createWebAudioSink();
+    const speechPlayer=createAudioPlayer({sink:speechSink,state:speechState,volume:speech.volume,muted:speech.muted});
+    const speechQueue=createSpeechQueue({provider:createMockTtsProvider(),player:speechPlayer,state:speechState});
+    const speechLabels={idle:'空闲',synthesizing:'合成中',speaking:'播放中',stopped:'已停止',error:'播放失败'};
+    const setSpeechState=(text,isError=false)=>{if(!speechUI.state)return;speechUI.state.textContent=text;speechUI.state.classList.toggle('error',isError);};
+    const paintSpeech=()=>{
+      if(!speechUI.enabled)return;
+      speechUI.enabled.checked=speech.enabled;
+      speechUI.muted.checked=speech.muted;
+      speechUI.volume.value=String(Math.round(speech.volume*100));
+      setSpeechState(speech.enabled?`语音已启用（${speechLabels[speechState.state]||speechState.state}）`:'语音未启用：不会播放任何音频');
+    };
+    speechState.on('statechange',({state,reason})=>{
+      if(!speech.enabled)return;
+      setSpeechState(`语音：${speechLabels[state]||state}${reason==='user'?'（用户停止）':''}`,state==='error');
+    });
+    // 口型同步契约：只暴露 0..1 的 RMS 数值，供主机后续消费。
+    speechState.on('rms',({rms})=>{window.__dshSpeechRms=rms;});
+    const applySpeech=patch=>{
+      speech=sanitizeSpeechPreferences(patch,speech);preferences.speech=speech;
+      speechPlayer.setVolume(speech.volume);speechPlayer.setMuted(speech.muted);
+      paintSpeech();scheduleSave();return persist();
+    };
+    if(speechUI.enabled){
+      speechUI.enabled.addEventListener('change',async()=>{
+        const ok=await applySpeech({enabled:speechUI.enabled.checked});
+        if(!ok){speechUI.enabled.checked=!speechUI.enabled.checked;setSpeechState('语音设置保存失败',true);return;}
+        if(!speech.enabled)speechQueue.stop();else setSpeechState('语音已启用：下一条回复会播放离线模拟音频');
+      });
+      speechUI.muted.addEventListener('change',()=>{void applySpeech({muted:speechUI.muted.checked});});
+      speechUI.volume.addEventListener('input',()=>{void applySpeech({volume:Number(speechUI.volume.value)/100});});
+      window.__dshSpeech=()=>({enabled:speech.enabled,state:speechState.state,pending:speechQueue.pending,muted:speechPlayer.muted,volume:speechPlayer.volume});
+      paintSpeech();
+    }
+
+    // —— 跟随开发会话（只读）：用户显式选择、先保存后订阅、断线有限重连 ——
     const followUI={
       enabled:document.getElementById('follow-enabled'),
       session:document.getElementById('follow-session'),

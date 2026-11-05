@@ -92,3 +92,17 @@ export function sanitizeFollowPreferences(input, previous = defaultFollowPrefere
 export function canUseHostBackend(chat) {
   return !!chat && chat.enabled === true && chat.backend === 'host' && chat.realConsent === true;
 }
+/** 语音（TTS）：默认关闭，本轮只用离线模拟音频。 */
+export const DEFAULT_SPEECH_PREFERENCES = Object.freeze({ enabled: false, muted: false, volume: 0.8 });
+
+export function defaultSpeechPreferences() {
+  return { ...DEFAULT_SPEECH_PREFERENCES };
+}
+
+export function sanitizeSpeechPreferences(input, previous = defaultSpeechPreferences()) {
+  const base = { ...defaultSpeechPreferences(), ...previous };
+  if (typeof input?.enabled === 'boolean') base.enabled = input.enabled;
+  if (typeof input?.muted === 'boolean') base.muted = input.muted;
+  if (Number.isFinite(Number(input?.volume))) base.volume = Math.min(1, Math.max(0, Number(input.volume)));
+  return { enabled: base.enabled === true, muted: base.muted === true, volume: base.volume };
+}

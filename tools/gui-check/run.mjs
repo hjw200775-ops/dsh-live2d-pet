@@ -177,7 +177,7 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
     if (await evaluate('!!window.__dshDesktopReady && !!window.__dshInteraction').catch(() => false)) break;
     await sleep(400);
   }
-  const boot = await evaluate('({ready:!!window.__dshDesktopReady, hook:typeof window.__dshInteraction})');
+  const boot = await evaluate('({ready:!!window.__dshDesktopReady, hook:typeof window.__dshInteraction, chat:typeof window.__dshChat, follow:typeof window.__dshFollow, speech:typeof window.__dshSpeech})');
   check('隔离窗口加载并暴露调试钩子', boot.ready === true && boot.hook === 'function', JSON.stringify(boot));
 
   // 存档隔离 + 迁移：旧 preferences.json 只读复制成 preferences.desktop.json，旧文件不被改写或删除
@@ -247,6 +247,19 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
 
   await evaluate(`(()=>{window.fetch=window.__realFetch;const c=document.getElementById('interaction-body');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(1200);
+  // ---- 语音（TTS）----
+  const speechBoot = await evaluate(`({ hasEnable:!!document.getElementById('speech-enabled'), enabled:document.getElementById('speech-enabled')?.checked, hasMuted:!!document.getElementById('speech-muted'), hasVolume:!!document.getElementById('speech-volume'), state:document.getElementById('speech-state')?.textContent })`);
+  check('语音控件存在且默认关闭', speechBoot.hasEnable === true && speechBoot.enabled === false && speechBoot.hasMuted === true && speechBoot.hasVolume === true, JSON.stringify(speechBoot));
+
+  await evaluate(`(()=>{const c=document.getElementById('speech-enabled');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  let speechState = null;
+  for (let i = 0; i < 20; i++) {
+    speechState = await evaluate(`document.getElementById('speech-state').textContent`);
+    if (speechState.includes('语音已启用')) break;
+    await sleep(200);
+  }
+  check('启用语音后状态明确（离线模拟音频）', speechState?.includes('语音已启用') === true, String(speechState));
+
   // ---- 角色人格与上下文 ----
   const personaBoot = await evaluate(`({ hasPersona:!!document.getElementById('chat-persona'), maxLength:document.getElementById('chat-persona')?.maxLength, hasClear:!!document.getElementById('chat-clear'), clearDisabled:document.getElementById('chat-clear')?.disabled })`);
   check('角色描述与清空上下文控件存在', personaBoot.hasPersona === true && personaBoot.maxLength === 200 && personaBoot.hasClear === true, JSON.stringify(personaBoot));

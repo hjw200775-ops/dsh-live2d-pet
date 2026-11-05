@@ -10,6 +10,7 @@ import {createPreferences} from './preferences.js';
 import {createActivity} from './activity.js';
 import { sanitizeChatPreferences, validateChatMessage, CHAT_LIMITS } from './features/chat/config.mjs';
 import { encodeSseFrame } from './features/chat/sse.mjs';
+import { canUseHostBackend } from './features/chat/config.mjs';
 import { writeChatStream } from './features/chat/stream.mjs';
 import { HOST_BRIDGE_FILE, readHostBridgeInfo } from './features/chat/host-bridge.mjs';
 
@@ -322,7 +323,8 @@ export async function startViewer(config) {
         try {
           let proxied=false;
           // Overlay 没有可信实例身份，即使 Desktop 存档授权也一律模拟，绝不代理到 Host。
-          if(chat.backend==='host' && !overlay){
+          // 服务端二次检查：未启用/未许可时不转发到 Host（客户端正文无法授权）。
+          if(chat.backend==='host' && !overlay && canUseHostBackend(chat)){
             const host=await loadHostBridge(config.configDir);
             if(host) proxied=await proxyHostChat({res,host,text:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs});
           }
@@ -330,7 +332,7 @@ export async function startViewer(config) {
             await writeChatStream({
               res,prompt:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs,
               backend:'simulated',model:'local-simulator',scenario:chat.backend==='host'?'ok':limits.scenario,
-              degraded:chat.backend==='host',degradedReason:overlay?'overlay-simulated-only':'host-unavailable',
+              degraded:chat.backend==='host',degradedReason:overlay?'overlay-simulated-only':(canUseHostBackend(chat)?'host-unavailable':'not-authorized'),
             });
           }
         } catch(error) {

@@ -960,3 +960,81 @@ GUI：24 项通过（新增角色描述控件与清空按钮检查）。`check_r
 2. Overlay 的真实能力被刻意禁用，需要独立的实例身份机制才能开启。
 3. 模拟无记忆是产品选择，用户切到真实后端后上下文从零开始。
 4. 设置保存依赖本地 HTTP 往返；极端情况下保存成功但 Host 尚未重读文件（毫秒级竞态），仍由 Host 侧二次校验兜底。
+## 29. 第八阶段第二部分：TTS 语音底座
+
+### 29.1 Pet 设置回滚（收尾修复）
+
+- 新增 `src/features/chat/chat-settings.mjs`：`createChatSettings({initial, save})`
+  - 内存先更新、保存串行化；
+  - 保存失败且期间无新修改 → **完整回滚 chat 快照**（不只是复选框）；
+  - 旧保存失败时若有新修改 → 不回滚（`stale`），避免覆盖新设置；
+  - `saving` 期间 `sendChat` 拒绝发送，避免拿旧授权发真实请求；
+  - 撤销许可保存失败 → `realCallRevoked=true`，客户端持续阻止真实请求，并明确提示"磁盘上可能仍是旧授权"。
+- viewer-server 在转发 Host 前二次检查 `canUseHostBackend(chat)`：未启用/未许可 → 本地模拟并标记
+  `degraded:true, reason:'not-authorized'`，**不读请求正文里的任何授权字段**。
+- 测试改为真实状态回滚（`chat-settings.test.mjs`），不再只靠源码正则。
+
+### 29.2 语音模块架构（`src/features/speech/`）
+
+| 模块 | 职责 |
+| --- | --- |
+| `state.mjs` | SpeechState：`idle/synthesizing/speaking/stopped/error`，`statechange` 与 `rms` 事件；无 Node 依赖 |
+| `provider.mjs` | TTSProvider 契约 + `createMockTtsProvider`（离线生成 16-bit PCM WAV，不联网） |
+| `player.mjs` | AudioPlayer：音量/静音/停止/释放，sink 由宿主提供 |
+| `queue.mjs` | SpeechQueue：串行播放、停止、按 id 取消、替换、去重、失败恢复 |
+| `index` 消费 | 渲染器用 Web Audio 解码播放，AnalyserNode 计算 RMS |
+
+不把 TTS 逻辑放进动画循环；播放器只发 `rms` 数值。
+
+### 29.3 接入对话
+
+- TTS **默认关闭**，设置面板手动启用；音量/静音可调；
+- Pet 回复成功后入队（模拟回复也可用于播放测试）；
+- `stopChat()` 同时 `speechQueue.stop()`；新旧语音串行播放，永不重叠；
+- **Follow 永不朗读**（源码契约测试：Follow 区块不出现 `speechQueue`）；
+- 不朗读推理、工具结果或日志：入队文本只来自 SSE `delta` 累加出的最终助手回复；
+- 不把正文写文件，不入日志。
+
+### 29.4 口型同步契约（只定义，不接动画）
+
+```
+SpeechState 事件：
+  statechange -> { state: 'idle'|'synthesizing'|'speaking'|'stopped'|'error', reason }
+  rms         -> { rms: 0..1, at: epoch_ms }   // 约 30–60 Hz，播放停止时归零
+
+约束：
+  - 负载不含文本、会话、路径或任何凭据；
+  - 主机只消费 rms 驱动嘴部参数，不反向修改播放器；
+  - 本轮不修改 Live2D 模型、参数或动画核心。
+渲染器还暴露 `window.__dshSpeechRms` 供联调读取。
+```
+
+### 29.5 本地 TTS 调研（sherpa-onnx）
+
+| 维度 | 结论 |
+| --- | --- |
+| Windows / Node | 提供 Node-Addon（`sherpa-onnx-node`）与 C API；Windows x64 有预编译包。**Electron 渲染进程不能直接加载**（ABI 不匹配），应放在 Host 侧 Node 进程或独立 sidecar，再经桥接把音频交给渲染器 |
+| 语言 | 官方模型覆盖中文、英文（VITS/Matcha/Kokoro 多语）；日文没有稳定的官方多语 TTS 模型，需要单独评估（Kokoro 上游支持日文，但 sherpa 发布的模型以中英为主） |
+| 流式 | C++/Python 侧支持回调式增量合成；Node-Addon 的 `generate` 也可分块回调，但不是"边说边解码"的真流式，首块延迟取决于模型 |
+| 体积 / 资源 | VITS 中文约 60–120 MB、Matcha 约 100 MB、Kokoro 多语约 300 MB；CPU 实时率约 0.1–0.5 RTF（视模型与机器），GPU 非必需 |
+| 许可 | 代码 Apache-2.0；**模型许可逐个不同**（部分训练集限制商用），接入前必须逐模型核对，不能默认商用可用 |
+| 额外下载 | 需要单独下载模型与 espeak-ng-data（部分模型），本轮不自动安装 |
+
+**本轮不安装任何语音模型，也不新增付费服务**；离线验收只用自带的 mock WAV。
+
+### 29.6 测试
+
+`npm test`：**309 / 309 通过**（+18）：
+- `chat-settings` 6：完整回滚、串行化、旧保存不覆盖新设置、撤销失败标记、saving 标志、初始化清洗
+- `speech` 12：状态/RMS 契约、WAV 头、队列顺序、停止、按 id 取消、失败恢复、失败后继续、去重、静音/音量、dispose、Follow 隔离
+- Overlay 授权二次检查等既有用例保持通过
+
+GUI：**28 项通过**（新增语音控件默认关闭、启用后状态明确）。
+
+### 29.7 遗留风险
+
+1. sherpa-onnx 与 Electron 的 ABI 兼容需实测；建议 Host/sidecar 方案。
+2. 日文声线暂无官方稳定模型，需另行选型与许可核对。
+3. 口型同步只定义契约，实际嘴部驱动由主机 Codex 后续接入。
+4. 模拟音频是正弦波，不是人声；只能验证管线，不能验证听感。
+5. 语音状态与聊天取消是"同源"的，但网络延迟下仍可能出现极短的尾音。

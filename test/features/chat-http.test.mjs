@@ -220,7 +220,9 @@ test('真实后端不再误判：host-llm 合法、降级明确、取消/错误�
 
 test('Pet 设置先保存再请求：失败回滚、取消许可立即中止在途真实请求', async () => {
   const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
-  assert.match(viewer, /const applyChat=patch=>\{[^}]*return persist\(\);\}/);
+  assert.match(viewer, /const chatStore=createChatSettings\(/);
+  assert.match(viewer, /撤销真实许可保存失败/);
+  assert.match(viewer, /chatStore\.saving/);
   assert.match(viewer, /const ok=await applyChat\(\{enabled:chatUI\.enabled\.checked\}\)/);
   assert.match(viewer, /设置保存失败，聊天状态未改变/);
   assert.match(viewer, /设置保存失败，后端未改变/);

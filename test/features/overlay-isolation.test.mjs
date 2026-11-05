@@ -103,6 +103,47 @@ test('Desktop 模式仍可走 Host（对照组）', async t => {
   }
 });
 
+test('未授权时服务端二次检查：backend=host 但没有许可也不转发 Host', async t => {
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  let calls = 0;
+  try {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-gate-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await mkdir(path.join(root, 'Animation'));
+    await Promise.all([
+      writeFile(path.join(root, 't.model3.json'), JSON.stringify({ Version: 3, FileReferences: { Moc: 't.moc3', Textures: ['t.png'] } })),
+      writeFile(path.join(root, 't.moc3'), Buffer.from([77, 79, 67, 51, 5])),
+      writeFile(path.join(root, 't.png'), 'x'),
+      writeFile(path.join(root, 'core.js'), '// core'),
+      writeFile(path.join(root, 'Animation/IDLE.motion3.json'), '{}'),
+    ]);
+    const chat = { enabled: true, mode: 'pet', backend: 'host', realConsent: false };
+    await writeFile(path.join(root, 'preferences.json'), JSON.stringify({ version: 1, chat }));
+    await writeFile(path.join(root, 'preferences.desktop.json'), JSON.stringify({ version: 1, chat }));
+    const viewer = await startViewer({
+      modelFile: path.join(root, 't.model3.json'),
+      coreFile: path.join(root, 'core.js'),
+      configDir: root,
+      preferencesFile: path.join(root, 'preferences.json'),
+      mode: 'desktop',
+    });
+    t.after(() => viewer.close());
+    const host = await startHostBridge({
+      configDir: root,
+      llm: { stream: () => { calls++; return (async function* () { yield { type: 'text-delta', text: '不该调用' }; yield { type: 'finish', reason: { kind: 'ok' } }; })(); } },
+      agentDefaultModel: { get: () => ({ provider: 'fake', model: 'm' }) },
+    });
+    t.after(() => host.close());
+    const frames = parse(await (await post(new URL('.', viewer.url), 'chat', { text: '无许可请求' })).text());
+    assert.equal(frames[0].simulated, true);
+    assert.equal(frames[0].degraded, true);
+    assert.equal(frames[0].reason, 'not-authorized');
+    assert.equal(calls, 0);
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+  }
+});
+
 test('canUseHostBackend 只在 enabled + host + consent 同时满足时为真', () => {
   assert.equal(canUseHostBackend({ enabled: true, backend: 'host', realConsent: true }), true);
   assert.equal(canUseHostBackend({ enabled: false, backend: 'host', realConsent: true }), false);
