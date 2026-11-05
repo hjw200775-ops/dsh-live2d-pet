@@ -51,7 +51,8 @@
     "desktop": "node scripts/desktop.mjs",
     "setup": "node scripts/setup.mjs",
     "fetch-model": "node scripts/fetch-model.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node --test test/*.test.mjs"
   },
   "keywords": [
     "dsh",
