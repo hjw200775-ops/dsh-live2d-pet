@@ -260,6 +260,18 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
   }
   check('启用语音后状态明确（离线模拟音频）', speechState?.includes('语音已启用') === true, String(speechState));
 
+  // ---- 设置面板：跟随鼠标、空白关闭 ----
+  await evaluate(`(()=>{const p=document.getElementById('panel');p.hidden=true;return true;})()`);
+  await evaluate(`(()=>{const e=new MouseEvent('contextmenu',{clientX:120,clientY:140,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
+  await sleep(150);
+  const popover = await evaluate(`(()=>{const p=document.getElementById('panel');const r=p.getBoundingClientRect();return {hidden:p.hidden,left:r.left,top:r.top,width:r.width,right:r.right,innerW:innerWidth,innerH:innerHeight,position:getComputedStyle(p).position};})()`);
+  check('右键在鼠标位置弹出设置面板', popover.hidden === false && popover.position === 'fixed' && popover.left <= 122 && popover.top <= 142 && popover.left >= 8 && popover.top >= 8 && popover.right <= popover.innerW - 8, JSON.stringify(popover));
+
+  await evaluate(`(()=>{const e=new MouseEvent('mousedown',{clientX:20,clientY:innerHeight-20,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
+  await sleep(150);
+  const closed = await evaluate(`document.getElementById('panel').hidden`);
+  check('点击面板外空白区域关闭设置', closed === true, String(closed));
+
   // ---- 角色人格与上下文 ----
   const personaBoot = await evaluate(`({ hasPersona:!!document.getElementById('chat-persona'), maxLength:document.getElementById('chat-persona')?.maxLength, hasClear:!!document.getElementById('chat-clear'), clearDisabled:document.getElementById('chat-clear')?.disabled })`);
   check('角色描述与清空上下文控件存在', personaBoot.hasPersona === true && personaBoot.maxLength === 200 && personaBoot.hasClear === true, JSON.stringify(personaBoot));

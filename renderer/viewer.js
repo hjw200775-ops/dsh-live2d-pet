@@ -626,6 +626,19 @@ import { createSseParser } from './features/chat/sse.mjs';
       cleanups.push(()=>clearInterval(hitTimer));
       const gestures=createGestureRecognizer({slop:5,holdMs:180,doubleMs:260});
       const bubble=document.getElementById('bubble'),panel=document.getElementById('panel');
+      const lastMouse={x:innerWidth/2,y:innerHeight/2};
+      // 设置面板跟随鼠标：先显示再测量，最后把左上角夹在视口内。
+      const openPanelAt=(x,y)=>{
+        panel.hidden=false;desktopApi.setIgnore(false);
+        const pad=8,width=panel.offsetWidth||260,height=Math.min(panel.offsetHeight||400,innerHeight-pad*2);
+        const left=Math.max(pad,Math.min(x,innerWidth-width-pad));
+        const top=Math.max(pad,Math.min(y,innerHeight-height-pad));
+        panel.style.left=left+'px';panel.style.top=top+'px';
+      };
+      const closePanel=()=>{
+        panel.hidden=true;
+        desktopApi.setIgnore(!hitAt(lastMouse.x,lastMouse.y));
+      };
       let clickTimer=0,bubbleTimer=0,lastReaction=0,nod=null,lastPointerX=0,pinned=true;
       const hoveredUi=target=>!!(target&&target.closest&&target.closest('#panel,#balance,button'));
       const regionAt=y=>{const rect=document.getElementById('pet').getBoundingClientRect();return (y-rect.top)/Math.max(1,rect.height)<.42?'head':'body';};
@@ -647,12 +660,14 @@ import { createSseParser } from './features/chat/sse.mjs';
       window.__nodOffset=now=>{if(!nod)return 0;const t=(now-nod.start)/nod.duration;if(t>=1){nod=null;return 0;}return Math.sin(t*Math.PI)*nod.amp;};
       window.__lean=()=>lean;
       on(window,'mousedown',e=>{
+        lastMouse.x=e.clientX;lastMouse.y=e.clientY;
         if(e.button!==0||hoveredUi(e.target)||!hitAt(e.clientX,e.clientY))return;
-        panel.hidden=true;
+        if(!panel.hidden)closePanel();
         const decision=gestures.pointerDown(e.clientX,e.clientY,performance.now());
         if(decision.type==='pending-double')clearTimeout(clickTimer);
       });
       on(window,'mousemove',e=>{
+        lastMouse.x=e.clientX;lastMouse.y=e.clientY;
         if(windowDrag){
           const dt=Math.max(16,performance.now()-(window.__lastMove||performance.now()));
           leanTarget=Math.max(-10,Math.min(10,(e.clientX-lastPointerX)/dt*18));
@@ -683,20 +698,25 @@ import { createSseParser } from './features/chat/sse.mjs';
         }
       });
       on(window,'contextmenu',e=>{
-        if(!hitAt(e.clientX,e.clientY)&&!hoveredUi(e.target))return;
         e.preventDefault();
-        panel.hidden=false;
-        desktopApi.setIgnore(false);
+        if(e.target instanceof Node&&panel.contains(e.target))return; // 面板内右键不跳位置
+        openPanelAt(e.clientX,e.clientY);
       });
+      // 点击面板外的任意空白/模型区域立即关闭
+      on(window,'mousedown',e=>{
+        if(panel.hidden)return;
+        if(e.target instanceof Node&&(panel.contains(e.target)||e.target.closest?.('#balance')))return;
+        closePanel();
+      },true);
       // 透明点击穿透时也提供键盘入口，避免仅能通过鼠标打开设置。
       on(window,'keydown',e=>{
         if((e.shiftKey&&e.key==='F10')||e.key==='ContextMenu'){
-          e.preventDefault();panel.hidden=false;desktopApi.setIgnore(false);
-        }else if(e.key==='Escape'&&!panel.hidden){panel.hidden=true;}
+          e.preventDefault();openPanelAt(lastMouse.x,lastMouse.y);
+        }else if(e.key==='Escape'&&!panel.hidden){closePanel();}
       });
       on(panel,'click',e=>{
         const act=e.target?.dataset?.act;if(!act)return;
-        if(act==='close'){panel.hidden=true;return;}
+        if(act==='close'){closePanel();return;}
         if(act==='larger')scaleDesktop(1.15);
         if(act==='smaller')scaleDesktop(1/1.15);
         if(act==='reset'){zoom=1;x=y=0;desktopApi.resetScale();}
