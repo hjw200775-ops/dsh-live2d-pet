@@ -630,9 +630,16 @@ import { createSseParser } from './features/chat/sse.mjs';
       // 设置面板跟随鼠标：先显示再测量，最后把左上角夹在视口内。
       const openPanelAt=(x,y)=>{
         panel.hidden=false;desktopApi.setIgnore(false);
-        const pad=8,width=panel.offsetWidth||260,height=Math.min(panel.offsetHeight||400,innerHeight-pad*2);
-        const left=Math.max(pad,Math.min(x,innerWidth-width-pad));
-        const top=Math.max(pad,Math.min(y,innerHeight-height-pad));
+        const pad=8,gap=10;
+        const width=panel.offsetWidth||240;
+        const height=Math.min(panel.offsetHeight||400,innerHeight-pad*2);
+        // 默认出现在光标右下方；右侧放不下就翻到左侧，底部放不下就向上夹。
+        let left=x+gap;
+        if(left+width>innerWidth-pad)left=x-width-gap;
+        let top=y+gap;
+        if(top+height>innerHeight-pad)top=innerHeight-height-pad;
+        left=Math.max(pad,Math.min(left,innerWidth-width-pad));
+        top=Math.max(pad,top);
         panel.style.left=left+'px';panel.style.top=top+'px';
       };
       const closePanel=()=>{
@@ -678,7 +685,8 @@ import { createSseParser } from './features/chat/sse.mjs';
         if(decision?.type==='drag-start'){
           clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
         }
-        desktopApi.setIgnore(!(hoveredUi(e.target)||hitAt(e.clientX,e.clientY)));
+        // 面板打开时整窗保持可点击，否则鼠标移到空白处会重新穿透，点击无法关闭面板。
+        desktopApi.setIgnore(panel.hidden?! (hoveredUi(e.target)||hitAt(e.clientX,e.clientY)):false);
         // 鼠标跟随：记录软饱和目标，由眼球与头部的独立阻尼响应逼近。
         notePointer(e.clientX,e.clientY,performance.now());
       });

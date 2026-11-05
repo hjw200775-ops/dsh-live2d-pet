@@ -265,7 +265,7 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
   await evaluate(`(()=>{const e=new MouseEvent('contextmenu',{clientX:120,clientY:140,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
   await sleep(150);
   const popover = await evaluate(`(()=>{const p=document.getElementById('panel');const r=p.getBoundingClientRect();return {hidden:p.hidden,left:r.left,top:r.top,width:r.width,right:r.right,innerW:innerWidth,innerH:innerHeight,position:getComputedStyle(p).position};})()`);
-  check('右键在鼠标位置弹出设置面板', popover.hidden === false && popover.position === 'fixed' && popover.left <= 122 && popover.top <= 142 && popover.left >= 8 && popover.top >= 8 && popover.right <= popover.innerW - 8, JSON.stringify(popover));
+  check('右键在鼠标位置弹出设置面板', popover.hidden === false && popover.position === 'fixed' && popover.left <= 132 && popover.left >= 8 && popover.top <= 152 && popover.top >= 8 && popover.right <= popover.innerW - 8, JSON.stringify(popover));
 
   await evaluate(`(()=>{const e=new MouseEvent('mousedown',{clientX:20,clientY:innerHeight-20,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
   await sleep(150);
