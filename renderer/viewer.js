@@ -1,3 +1,5 @@
+import { thinkingHand, handReturn, handEntry, createThinkingFace, loadThinkingHandReturns } from './runtime/thinking-accents.mjs';
+import { createThinkingMotion, thinkingPhase } from './runtime/thinking.mjs';
 import { attachMotionPolicy } from './runtime/motion-policy.mjs';
 import { hitDrawableList } from './runtime/model-hit.mjs';
 import { createGestureRecognizer } from './runtime/gesture.mjs';
@@ -15,7 +17,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
-  let preferences={version:1,model:{zoom:1,x:0,y:0}},zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle';
+  let preferences={version:1,model:{zoom:1,x:0,y:0}},zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle',currentThinkingPhase='waiting';
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
   function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
@@ -52,6 +54,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     app=new PIXI.Application({view:canvas,backgroundAlpha:0,antialias:true,autoStart:false,resolution:Math.min(devicePixelRatio||1,2),autoDensity:true});
     model=await PIXI.live2d.Live2DModel.from(new URL('model/model.model3.json',location.href).href,{autoUpdate:false,autoInteract:false,motionPreload:'ALL'});
     if(disposed){model.destroy();return;}
+    const thinkingHandReturns=await loadThinkingHandReturns(new URL('model/model.model3.json',location.href));
     app.stage.addChild(model);model.anchor.set(.5,.5);
     const nativeW=model.width,nativeH=model.height;
     const desktopApi=window.dshDesktop||null;
@@ -128,7 +131,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       const button=document.createElement('button');
       button.type='button';button.textContent=label;
       button.addEventListener('click',async()=>{
-        motionLocked=true;
+        motionLocked=true;automaticHand='default';
         const started=await model.motion(group,0,3);
         if(!started&&manager.state?.currentGroup!==group)status.hidden=false,status.textContent=`动作 ${label} 无法启动`;
       });
@@ -300,16 +303,37 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     const manager=model.internalModel.motionManager;
     attachMotionPolicy(manager);
     PIXI.live2d.config.preserveExpressionOnMotion=true;
-    let chain=Promise.resolve(),epoch=0,handRaised=false,lastExpression='';
+    let chain=Promise.resolve(),epoch=0,handRaised=false,lastExpression='',automaticHand='default',returningAutomaticHand=false;
     const activate=(mode,options={})=>{
       if(!Object.hasOwn(labels,mode))return;desiredMode=mode;badge.textContent=labels[mode];const revision=++epoch;
       const playIntro=options.intro!==false;
       chain=chain.catch(fail).then(async()=>{
         if(disposed||revision!==epoch)return;
         appliedMode=mode;
-        const group=mode==='answering'?'Answering':mode==='thinking'?'Thinking':handRaised?'Return':'Idle';
+        const wantedHand=thinkingHand(mode,currentThinkingPhase);
+        let group=mode==='answering'?'Answering':handRaised?'Return':'Idle';
         const intro=playIntro&&mode==='error'?'Flinch':null;
         if(!motionLocked&&!gestureLock){
+          // Restore the outgoing automatic pose before changing hand families.
+          // State changes invalidate stale transitions; user gestures always win.
+          const outgoing=automaticHand!==wantedHand?handReturn(automaticHand):null;
+          if(outgoing){
+            automaticHand='default';returningAutomaticHand=true;
+            await model.motion(outgoing,0,3);
+            await new Promise(resolve=>setTimeout(resolve,1300));
+            returningAutomaticHand=false;
+            if(!motionLocked&&!gestureLock){
+              for(const [id,value] of Object.entries(thinkingHandReturns))model.internalModel.coreModel.setParameterValueById(id,value);
+            }
+            if(disposed||revision!==epoch||motionLocked||gestureLock)return;
+          }
+          if(handRaised&&wantedHand!=='default'){
+            await model.motion('Return',0,3);handRaised=false;
+            await new Promise(resolve=>setTimeout(resolve,1100));
+            if(disposed||revision!==epoch||motionLocked||gestureLock)return;
+          }
+          const entry=handEntry(wantedHand);
+          if(entry)group=automaticHand===wantedHand?'Idle':entry;
           if(intro){
             const started=await model.motion(intro,0,3);
             if(!started && manager.state?.currentGroup!==intro)throw new Error(`动作 ${intro} 无法启动`);
@@ -318,6 +342,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
           }
           const started=await model.motion(group,0,3);
           if(!started && manager.state?.currentGroup!==group)throw new Error(`动作 ${group} 无法启动`);
+          automaticHand=wantedHand;
         }
         handRaised=mode==='answering';
         if(revision!==epoch||disposed)return;
@@ -327,7 +352,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     };
     playClickMotions=async groups=>{
       const serial=++gestureSerial;
-      gestureLock=true;
+      gestureLock=true;automaticHand='default';
       try{
         for(let index=0;index<groups.length;index++){
           if(serial!==gestureSerial||disposed)return;
@@ -342,34 +367,48 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       }
     };
     const applyWardrobe=coreModel=>{
-      for(const [id,value] of Object.entries(composeTargets(wardrobe,appliedMode))){
+      for(const [id,value] of Object.entries(composeTargets(wardrobe,appliedMode==='thinking'?'idle':appliedMode))){
         try{coreModel.setParameterValueById(id,value);}catch{/* This model may not expose every catalog id. */}
       }
     };
     // Physics reads LeanInput and the skirt parameter before the mesh updates, so the targets have to be in place first.
-    let frameLook={};
+    let frameLook={},frameThinking={},frameThinkingFace={};
     const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
     attachNaturalOverlay(model.internalModel,()=>{
       const now=performance.now();
       const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
       const values=idleMotion.valueAt(now/1000,idleEnabled);
       const point=look.update(now);
+      const blocked=gestureLock||motionLocked||windowDrag||paused;
+      const customFace=(wardrobe.eyes&&wardrobe.eyes!=='none')||wardrobe.sweat||wardrobe.darkFace||wardrobe.loadingFace||wardrobe.tears;
+      frameThinkingFace=thinkingFace.valueAt(now/1000,appliedMode==='thinking'?currentThinkingPhase:null,blocked||customFace);
+      frameThinking=thinkingMotion.valueAt(now/1000,appliedMode==='thinking'?currentThinkingPhase:null,{blocked,looking:look.active});
+      for(const [id,value] of Object.entries(frameThinking)){
+        if(!id.startsWith('ParamEye'))values[id]=(values[id]||0)+value;
+      }
       frameLook=followEnabled()?lookParameters(point):{};
       // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
       values.AngleX=(values.AngleX||0)+(frameLook.ParamAngleX||0);
       values.AngleY=(values.AngleY||0)+(frameLook.ParamAngleY||0);
-      if(appliedMode==='idle'||appliedMode==='thinking')values.ParamBreath=breathValue(now/1000);
+      if(!blocked&&(appliedMode==='idle'||appliedMode==='thinking'))values.ParamBreath=breathValue(now/1000);
       return values;
     });
     model.internalModel.on('afterMotionUpdate',()=>{
       const coreModel=model.internalModel.coreModel;
       applyWardrobe(coreModel);
+      if(!motionLocked&&!gestureLock&&!returningAutomaticHand&&automaticHand==='default'&&appliedMode!=='answering'){
+        for(const [id,value] of Object.entries(thinkingHandReturns))coreModel.setParameterValueById(id,value);
+      }
     });
     model.internalModel.on('beforeModelUpdate',()=>{
       const now=performance.now();
       const coreModel=model.internalModel.coreModel;
       if(appliedMode==='answering')coreModel.setParameterValueById('ParamMouthOpenY',.18+.32*(1+Math.sin(now*.017)));
       applyWardrobe(coreModel);
+      // Expression accents live after saveParameters, and never overwrite saved choices.
+      for(const [id,value] of Object.entries(frameThinkingFace)){
+        if(!(id==='key7'&&wardrobe.blush))coreModel.addParameterValueById(id,value);
+      }
       // 空闲小动作不再禁用跟随；头部控制器已在物理之前叠加，这里只叠加眼珠。
       if(followEnabled()){
         for(const id of ['ParamEyeBallX','ParamEyeBallY']){
@@ -384,10 +423,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
           coreModel.addParameterValueById('ParamEyeBallY',g.y);
         }catch{/* 同上 */}
       }
-      if(appliedMode==='thinking'){
-        coreModel.setParameterValueById('key8',1);
-        coreModel.setParameterValueById('Param140',(now%900)/900);
-      }else window.__thinkAt=0;
+      for(const id of ['ParamEyeBallX','ParamEyeBallY']){
+        if(Object.hasOwn(frameThinking,id))coreModel.addParameterValueById(id,frameThinking[id]);
+      }
       if(window.__nodOffset)coreModel.addParameterValueById('ParamAngleY',window.__nodOffset(now));
       if(desktopApi){
         lean+= (leanTarget-lean)*(1-Math.exp(-Math.min(50,now-(window.__leanAt||now))/140));
@@ -395,7 +433,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         if(!windowDrag)leanTarget=0;
         coreModel.addParameterValueById('ParamAngleZ',lean);
       }
-      const open=blink.valueAt(now/1000,appliedMode!=='answering'&&!paused);
+      const open=blink.valueAt(now/1000,appliedMode!=='answering'&&!paused&&!gestureLock&&!motionLocked&&!windowDrag);
       if(open<1){
         coreModel.multiplyParameterValueById('ParamEyeLOpen',open);
         coreModel.multiplyParameterValueById('ParamEyeROpen',open);
@@ -404,6 +442,8 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     if(!report.idle)throw new Error('缺少 Idle 动作');
     const seed=Math.floor(Math.random()*4294967296);
     const idleMotion=createIdleMotion({seed});
+    const thinkingFace=createThinkingFace({seed:seed+4});
+    const thinkingMotion=createThinkingMotion({seed:seed+3});
     const blink=createBlink({seed:seed+1});
     const gaze=createGaze();
     const look=createLookFollower();
@@ -471,7 +511,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       }
       if(!snapshot.low)balanceNotice='';
     };
-    eventSource.onmessage=e=>{try{const s=JSON.parse(e.data);applyBalance(s.balance);lastLinked=s.connected!==false;noteHost(lastLinked);if(s.connected===false){badge.textContent='未连接';badge.title='DSH 未连接，桌宠保持待机';if(desiredMode!=='idle')activate('idle');return;}if(s.mode!==desiredMode)activate(s.mode);else badge.textContent=labels[s.mode]||labels.idle;badge.title='跟随 DSH 实际回合状态';}catch(err){fail(err);}};
+    eventSource.onmessage=e=>{try{const s=JSON.parse(e.data);applyBalance(s.balance);const previousThinkingPhase=currentThinkingPhase;currentThinkingPhase=thinkingPhase(s.thinkingPhase);lastLinked=s.connected!==false;noteHost(lastLinked);if(s.connected===false){badge.textContent='未连接';badge.title='DSH 未连接，桌宠保持待机';if(desiredMode!=='idle')activate('idle');return;}if(s.mode!==desiredMode||(s.mode==='thinking'&&currentThinkingPhase!==previousThinkingPhase))activate(s.mode);else badge.textContent=labels[s.mode]||labels.idle;if(s.mode==='thinking')badge.textContent=({waiting:'等待响应',normal:'处理中',deep:'推理输出中'})[currentThinkingPhase];badge.title='跟随 DSH 实际回合状态';}catch(err){fail(err);}};
     eventSource.onerror=()=>{badge.title='宿主连接中断，正在重连';};
     on(canvas,'webglcontextlost',e=>{e.preventDefault();fail(new Error('WebGL 上下文丢失，请刷新'));});
     let then=performance.now(),lastPaceUi=0;status.textContent='已加载 · 状态联动已连接';
@@ -503,7 +543,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         const gear=paused?'暂停':(appliedMode!=='idle'||windowDrag)?'活动约 60 帧':'待机约 30 帧';
         if(el)el.textContent=stats.p95==null?`${gear} · 绘制间隔统计中`:`${gear} · 近 60 秒绘制 p95 ${Math.round(stats.p95)}ms`;
       }
-      Object.assign(canvas.dataset,{frames:String(frames),idlePlaying:String(!manager.isFinished()),zoom:String(zoom),offset:JSON.stringify([x,y]),mode:appliedMode,expression,motion});
+      Object.assign(canvas.dataset,{frames:String(frames),idlePlaying:String(!manager.isFinished()),zoom:String(zoom),offset:JSON.stringify([x,y]),mode:appliedMode,thinkingPhase:appliedMode==='thinking'?currentThinkingPhase:'',thinkingAccent:thinkingFace.snapshot().preset||'',expression,motion});
       scheduleTick(decision.wait);
     }
     raf=requestAnimationFrame(tick);hideTimer=setTimeout(()=>{if(!disposed&&frames>0)status.hidden=true;},2500);

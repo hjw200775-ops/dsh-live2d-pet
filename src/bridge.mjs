@@ -11,7 +11,7 @@ export function startBridgePublisher({ activity, bridgeFile, balance, fetchImpl 
       const port = Number(info.port);
       if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof info.token !== 'string' || info.token.length < 16) return;
       const snap = activity.snapshot();
-      const payload = { mode: snap.mode, activeCount: snap.activeCount || 0 };
+      const payload = { mode: snap.mode, thinkingPhase: snap.thinkingPhase, activeCount: snap.activeCount || 0 };
       if (balance) payload.balance = balance.snapshot();
       const response = await fetchImpl(`http://127.0.0.1:${port}/bridge`, {
         method: 'POST',

@@ -32,6 +32,10 @@ test('desktop link follows a reduced DSH snapshot and drops to idle when the hos
   assert.equal((await post({ mode: 'nope' })).status, 400);
   assert.equal((await post({ mode: 'thinking', activeCount: 1, text: 'secret prompt' }, 'wrong-token')).status, 403);
   assert.equal(JSON.stringify(link.snapshot()).includes('secret'), false);
+  assert.equal((await post({mode:'thinking',thinkingPhase:'deep',activeCount:1})).status,200);
+  assert.equal(link.snapshot().thinkingPhase,'deep');
+  assert.equal((await post({mode:'thinking',activeCount:1})).status,200);
+  assert.equal(link.snapshot().thinkingPhase,'waiting');
   const stop = startBridgePublisher({ activity: source, bridgeFile, intervalMs: 1000 });
   t.after(stop);
   source.receive('agent/status', { agent: { id: 'one' }, status: 'running' });

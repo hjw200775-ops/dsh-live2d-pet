@@ -1,3 +1,5 @@
+import { createThinkingFace } from '../src/runtime/thinking-accents.mjs';
+import { createThinkingMotion } from '../src/runtime/thinking.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -26,7 +28,7 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
   const context = {
     model: { internalModel }, performance: { now: () => now }, window: {},
     applyWardrobe() {}, appliedMode: 'idle', gestureLock: false, motionLocked: false, windowDrag: false, paused: false,
-    idleMotion: createIdleMotion({ seed: 42 }), blink: createBlink({ seed: 42 }), breathValue, attachNaturalOverlay,
+    thinkingHandReturns:{Movement1:0,Movement3:0,Param41:0},automaticHand:'default',returningAutomaticHand:false,wardrobe:{blush:false,sweat:false},thinkingFace:createThinkingFace(),thinkingMotion: createThinkingMotion(), currentThinkingPhase:'waiting', idleMotion: createIdleMotion({ seed: 42 }), blink: createBlink({ seed: 42 }), breathValue, attachNaturalOverlay,
     look: { active: false, update() { return { x: 0, y: 0 }; } }, lookParameters,
     gaze: { valueAt: () => ({ x: 0, y: 0 }) }, desktopApi: false,
   };
@@ -55,7 +57,30 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
   }
   assert.ok(moved);
   assert.ok(blinked);
+  // Run the installed renderer callbacks through all thinking phases and both exits.
+  for(const mode of ['normal','deep','waiting','answering','idle']){
+    context.appliedMode=['normal','deep','waiting'].includes(mode)?'thinking':mode;
+    context.currentThinkingPhase=mode;
+    for(let i=0;i<240;i++){
+      now+=1000/60;
+      internalModel.emit('afterMotionUpdate');
+      const saved={...values};
+      internalModel.updateNaturalMovements(1000/60,now);
+      values.ParamAngleX=values.AngleX;values.ParamAngleY=values.AngleY;
+      const head=values.ParamAngleY;
+      internalModel.emit('beforeModelUpdate');
+      assert.equal(values.ParamAngleY,head,'thinking must enter physics before mesh');
+      assert.ok(Math.abs(values.AngleY-baseline.AngleY)<=11.1);
+      assert.equal(values.key8,0,'short thinking must not force loading face');
+      values=saved;
+    }
+  }
+  assert.ok(Math.abs(values.AngleY-baseline.AngleY)<1e-6,'baseline restored');
+  context.appliedMode='idle';
+  values.Movement3=1;values.Param41=.7;internalModel.emit('afterMotionUpdate');
+  assert.equal(values.Movement3,0);assert.equal(values.Param41,0);
   context.gestureLock = true;
+  values.Param41=.7;internalModel.emit('afterMotionUpdate');assert.equal(values.Param41,.7);
   context.look.update = () => ({x:1,y:0.5});
   internalModel.emit('afterMotionUpdate');
   const saved = {...values};

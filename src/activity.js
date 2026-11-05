@@ -1,3 +1,4 @@
+import { thinkingPhase } from './runtime/thinking.mjs';
 // Contracts verified against the installed dsh-agent-loop 0.2.0-rc.2.
 import { cleanBalance } from './balance.mjs';
 export function createActivity({errorHoldMs = 6000} = {}) {
@@ -7,9 +8,10 @@ export function createActivity({errorHoldMs = 6000} = {}) {
   const publish = event => {
     const values = [...agents.values()];
     const mode = values.some(x=>x.error) ? 'error' : values.some(x=>x.running && x.mode==='answering') ? 'answering' : values.some(x=>x.running) ? 'thinking' : 'idle';
+    const phase = mode === 'thinking' ? (values.some(x=>x.running && x.phase==='deep') ? 'deep' : values.some(x=>x.running && x.phase==='normal') ? 'normal' : 'waiting') : null;
     const activeCount = values.filter(x=>x.running).length;
-    if(mode===current.mode && activeCount===current.activeCount) return;
-    current={mode,activeCount,event,at:Date.now(),seq:++seq};
+    if(mode===current.mode && activeCount===current.activeCount && phase===(current.thinkingPhase??null)) return;
+    current={mode,thinkingPhase:phase,activeCount,event,at:Date.now(),seq:++seq};
     history.push(snapshot()); if(history.length>80) history.shift();
     for(const fn of listeners) fn(snapshot());
   };
@@ -30,16 +32,17 @@ export function createActivity({errorHoldMs = 6000} = {}) {
     const s=agents.get(id)||{running:false,mode:'thinking',error:0};
     if(event==='agent/status') {
       s.running=p.status==='running';
-      if(s.running){s.mode='thinking';s.error=0;}
+      if(s.running){s.mode='thinking';s.phase='waiting';s.error=0;}
     } else if(event==='agent/error') { s.running=false;s.error=Date.now()+errorHoldMs; }
     else if(event==='agent/assistant-stream') {
       const f=p.frame;
-      if(f?.type==='start'){s.running=true;s.mode='thinking';s.error=0;}
+      if(f?.type==='start'){s.running=true;s.mode='thinking';s.phase='waiting';s.error=0;}
       if(f?.type==='chunk') {
         const c=f.chunk;
-        if(c?.type==='reasoning-delta' || c?.type==='tool-call-delta'){s.running=true;s.mode='thinking';}
+        if(c?.type==='reasoning-delta' || c?.type==='tool-call-delta'){s.running=true;s.mode='thinking';s.phase=c.type==='reasoning-delta'?'deep':'normal';}
         if(c?.type==='text-delta' && c.text){s.running=true;s.mode='answering';}
         if(c?.type==='finish' && c.reason?.kind==='error'){s.error=Date.now()+errorHoldMs;s.running=false;}
+        if(c?.type==='finish' && c.reason?.kind!=='error' && s.mode!=='answering') s.phase='waiting';
         // A normal stream end is not a turn end: tool steps can follow it.
       }
     }
@@ -65,8 +68,8 @@ export function createDesktopLink({staleMs=3000}={}) {
       const activeCount=Number.isFinite(Number(input?.activeCount))?Math.max(0,Math.min(99,Number(input.activeCount))):0;
       const balance=Object.hasOwn(input||{},'balance')?cleanBalance(input.balance):current.balance;
       clearTimeout(timer);
-      current={mode,connected:true,activeCount,balance,seq,event:'link',at:Date.now()};
-      timer=setTimeout(()=>{current={mode:'idle',connected:false,activeCount:0,balance:current.balance,seq,event:'disconnect',at:Date.now()};publish('disconnect');},staleMs);
+      current={mode,thinkingPhase:mode==='thinking'?thinkingPhase(input.thinkingPhase):null,connected:true,activeCount,balance,seq,event:'link',at:Date.now()};
+      timer=setTimeout(()=>{current={mode:'idle',thinkingPhase:null,connected:false,activeCount:0,balance:current.balance,seq,event:'disconnect',at:Date.now()};publish('disconnect');},staleMs);
       publish('link');
     },
     requestRefresh(){refresh=true;},

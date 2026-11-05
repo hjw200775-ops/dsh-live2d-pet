@@ -66,7 +66,7 @@ export async function startViewer(config) {
         for await (const part of req) { size += part.length;         if (size > 2048) { res.writeHead(413).end(); return; } parts.push(part); }
         let input; try { input = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { res.writeHead(400).end(); return; }
         if (!['idle', 'thinking', 'answering', 'error'].includes(input.mode)) { res.writeHead(400).end(); return; }
-        config.activity?.ingest?.({ mode: input.mode, activeCount: input.activeCount, balance: input.balance });
+        config.activity?.ingest?.({ mode: input.mode, thinkingPhase: input.thinkingPhase, activeCount: input.activeCount, balance: input.balance });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ refresh: config.activity?.takeRefresh?.() === true }));
         return;
