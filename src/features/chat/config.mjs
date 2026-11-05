@@ -85,3 +85,10 @@ export function sanitizeFollowPreferences(input, previous = defaultFollowPrefere
   if (typeof input?.hideContent === 'boolean') base.hideContent = input.hideContent;
   return { enabled: base.enabled, sessionId: base.sessionId, hideContent: base.hideContent };
 }
+/**
+ * 是否允许走 Host 真实后端：必须同时启用聊天、选 host、勾选真实许可。
+ * 只用于客户端 UX 与服务端兜底；真正授权仍以 Host 侧 authorizeRealChat 为准。
+ */
+export function canUseHostBackend(chat) {
+  return !!chat && chat.enabled === true && chat.backend === 'host' && chat.realConsent === true;
+}

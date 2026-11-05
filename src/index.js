@@ -102,7 +102,7 @@ export async function apply(ctx, config = {}) {
   const stopBridge=bridgeFile?startBridgePublisher({activity,bridgeFile,balance}):()=>{};
   const showOverlay=local.overlay!==false && config.overlay!==false;
   let viewer;
-  if(showOverlay) viewer=await startViewer({ ...local, configDir, preferencesFile:resolvePreferencesFile({ mode:'overlay', configDir, override:local.preferencesFile || process.env.DSH_LIVE2D_PREFERENCES_FILE }), activity });
+  if(showOverlay) viewer=await startViewer({ ...local, configDir, preferencesFile:resolvePreferencesFile({ mode:'overlay', configDir, override:local.preferencesFile || process.env.DSH_LIVE2D_PREFERENCES_FILE }), activity, mode:'overlay' });
   else {
     // 桌面窗口模式：Electron 没装好时自动补装，装完再拉窗口。整个过程不阻塞 DSH 启动。
     void launchDesktopPet({ pluginRoot, configFile, log }).catch(error => log(`[live2d] 桌宠启动失败：${error?.message || error}`));

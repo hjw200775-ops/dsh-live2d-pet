@@ -17,6 +17,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { startHostBridge } from '../../src/features/chat/host-bridge.mjs';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import os from 'node:os';
@@ -300,6 +301,49 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
   check('关闭对话后输入被禁用并提示未启用', chatOff.disabled === true && chatOff.state.includes('未启用'), JSON.stringify(chatOff));
   await evaluate(`(()=>{const c=document.getElementById('chat-enabled');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
   await sleep(300);
+  // ---- Fake Host LLM：真实后端端到端 ----
+  let hostBridge = null;
+  let hostCalls = 0;
+  process.env.DSH_LIVE2D_CHAT_REAL = '1';
+  hostBridge = await startHostBridge({
+    configDir: workdir,
+    llm: {
+      stream: () => {
+        hostCalls++;
+        return (async function* () {
+          yield { type: 'text-delta', text: '这是假 Host 模型的回复' };
+          yield { type: 'finish', reason: { kind: 'ok' } };
+        })();
+      },
+    },
+    agentDefaultModel: { get: () => ({ provider: 'fake-provider', model: 'fake-model' }) },
+  });
+  try {
+    await evaluate(`(()=>{const b=document.getElementById('chat-backend');b.value='host';b.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await evaluate(`(()=>{const c=document.getElementById('chat-consent');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await sleep(900);
+
+    await evaluate(`(()=>{const i=document.getElementById('chat-input');i.value='走真实后端';document.getElementById('chat-send').click();return true;})()`);
+    let realState = null;
+    for (let i = 0; i < 60; i++) {
+      realState = await evaluate(`({bubble:document.getElementById('bubble').textContent,state:document.getElementById('chat-state').textContent,err:document.getElementById('chat-state').classList.contains('error')})`);
+      if (realState.state.includes('回复完成') || realState.err) break;
+      await sleep(250);
+    }
+    check('Fake Host LLM：真实后端成功回复且不再误判', hostCalls === 1 && realState?.bubble?.includes('这是假 Host 模型的回复') === true && realState.state.includes('DSH 模型') && realState.err === false, JSON.stringify({ hostCalls, realState }));
+
+    await evaluate(`(()=>{const c=document.getElementById('chat-consent');c.checked=false;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await sleep(500);
+    const callsBefore = hostCalls;
+    await evaluate(`(()=>{const i=document.getElementById('chat-input');i.value='取消许可后还能发吗';document.getElementById('chat-send').click();return true;})()`);
+    await sleep(600);
+    const blocked = await evaluate(`({state:document.getElementById('chat-state').textContent,err:document.getElementById('chat-state').classList.contains('error')})`);
+    check('取消真实许可后立即阻止新的真实请求', hostCalls === callsBefore && blocked.state.includes('许可未开启'), JSON.stringify({ hostCalls, blocked }));
+  } finally {
+    delete process.env.DSH_LIVE2D_CHAT_REAL;
+    await hostBridge.close();
+  }
+
   const beforeRestart = await evaluate('window.__dshInteraction()');
   ws.close();
   return { beforeRestart, zh };

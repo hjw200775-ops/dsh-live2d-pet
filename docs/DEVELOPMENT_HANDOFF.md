@@ -917,3 +917,46 @@ GUI：24 项通过（新增角色描述控件与清空按钮检查）。`check_r
 3. 人格是提示层约束，不是安全边界；模型仍可能不遵守，不能替代权限控制。
 4. 模拟轮次刻意不进入真实历史，切换后端后上下文会"重新开始"，需在 UI 说明。
 5. 真实 DSH 会话验收（第七阶段遗留）仍未完成。
+## 28. 第八阶段第一部分收尾：Pet 交互一致性
+
+### 28.1 设置保存竞态
+
+- `applyChat()` 现在返回 `persist()` 的布尔结果；启用/关闭、切模式、切后端、改真实许可**都先等保存完成**；
+- 保存失败回滚 UI（复选框/下拉框恢复原值）并提示，不发起请求；
+- 取消真实许可时**先 `chatAbort.abort()`** 再保存，立即中止在途真实请求；
+- `sendChat()` 在本地检查 `backend==='host' && realConsent!==true`，直接拒绝发送，不等 150 ms 防抖；
+- Host 侧授权仍以 Desktop 存档为准，客户端正文无法绕过。
+
+### 28.2 真实后端 UI 判定
+
+原逻辑把 `simulated !== true` 一律判为 `unexpected-model`，会把合法的 host-llm 回复显示成失败。现在：
+
+- `meta.simulated === true` → 本地模拟；`meta.backend === 'host-llm'` 且 `simulated === false` → 合法真实后端；
+- 只有缺少后端标识或未知组合才判异常；
+- 降级（`degraded: true`）显示"DSH 模型不可用，已降级为本地模拟"；
+- `aborted` 显示"已停止生成"，错误/空流/缺结束仍显示失败，不会误报成功。
+
+### 28.3 Overlay 隔离
+
+- viewer-server 新增 `mode`：`src/index.js` 传 `'overlay'`，`desktop/main.mjs` 传 `'desktop'`；
+- Overlay 下聊天**强制模拟**（meta `degraded:true, reason:'overlay-simulated-only'`），即使 Desktop 存档已授权也不代理到 Host；
+- Overlay 下 Follow 直接 `409 overlay-unsupported`；
+- 测试用 Fake LLM 断言 Overlay 请求的 `llm.stream` 调用次数为 0，Desktop 对照组为 1。
+
+### 28.4 模拟记忆可见性（选择方案 A）
+
+- 模拟后端**保持无状态**，不写入 PetConversation；
+- UI 明确标注"本地模拟（无上下文记忆）"，完成态也是"回复完成（本地模拟）"；
+- 真实与模拟历史严格隔离（按 backend 打标签），切换后端不会把模拟内容带进真实上下文。
+
+### 28.5 测试
+
+`npm test`：**291 / 291 通过**（本轮 +6）。GUI：**26 项通过**，其中新增用 Fake Host LLM 的端到端检查：
+真实后端成功回复不误判、取消许可后 Host 调用次数不再增加。`check_release` 通过。
+
+### 28.6 遗留风险
+
+1. 真实 provider 仍未接入；`system`/块消息与 host-llm 的 UI 路径只经 Fake 验证。
+2. Overlay 的真实能力被刻意禁用，需要独立的实例身份机制才能开启。
+3. 模拟无记忆是产品选择，用户切到真实后端后上下文从零开始。
+4. 设置保存依赖本地 HTTP 往返；极端情况下保存成功但 Host 尚未重读文件（毫秒级竞态），仍由 Host 侧二次校验兜底。

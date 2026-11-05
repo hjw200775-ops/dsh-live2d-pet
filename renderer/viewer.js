@@ -240,10 +240,12 @@ import { createSseParser } from './features/chat/sse.mjs';
           :(chat.mode==='follow'?'本地模拟：跟随示例消息':'本地模拟：本地假模型回复'))
         :'对话未启用；所有回复都是模拟内容');
     };
-    const applyChat=patch=>{chat=sanitizeChatPreferences(patch,chat);preferences.chat=chat;paintChat();scheduleSave();};
+    // 返回保存是否成功：真实调用前必须先确认配置已落盘（Host 每次请求都读存档）。
+    const applyChat=patch=>{chat=sanitizeChatPreferences(patch,chat);preferences.chat=chat;paintChat();return persist();};
     const stopChat=()=>{chatAbort?.abort();};
     const sendChat=async()=>{
       if(chatAbort||!chat.enabled)return;
+      if(chat.backend==='host'&&chat.realConsent!==true){setChatState('真实调用许可未开启，未发送',true);return;}
       const text=chatUI.input.value.trim();
       if(!text){setChatState('先说点什么吧',true);return;}
       if([...text].length>CHAT_LIMITS.messageChars){setChatState(`最多 ${CHAT_LIMITS.messageChars} 个字`,true);return;}
@@ -257,9 +259,12 @@ import { createSseParser } from './features/chat/sse.mjs';
       const parser=createSseParser({onFrame:({data})=>{
         let payload;try{payload=JSON.parse(data);}catch{return;}
         if(payload?.type==='meta'){
-          backend=payload.backend||'simulated';degraded=payload.degraded===true;
-          if(payload.simulated!==true)failure='unexpected-model';
-          setChatState(degraded?'DSH 模型不可用，已降级为本地模拟':(backend==='host-llm'?'DSH 模型（本轮为模拟链路）':'本地模拟'));
+          const isSimulated=payload.simulated===true;
+          backend=payload.backend||(isSimulated?'simulated':'');
+          degraded=payload.degraded===true;
+          // host-llm 是授权通过的合法后端；只有缺少后端标识或未知组合才判为异常。
+          if(!backend||(!isSimulated&&backend!=='host-llm'))failure='unexpected-model';
+          setChatState(degraded?'DSH 模型不可用，已降级为本地模拟':(backend==='host-llm'?'DSH 模型（真实后端）':'本地模拟（无上下文记忆）'));
           return;
         }
         if(payload?.type==='delta'&&typeof payload.text==='string'){full+=payload.text;deltas++;showChatBubble(full,true);return;}
@@ -294,10 +299,30 @@ import { createSseParser } from './features/chat/sse.mjs';
       }
     };
     if(chatUI.enabled){
-      chatUI.enabled.addEventListener('change',()=>{if(!chatUI.enabled.checked)stopChat();applyChat({enabled:chatUI.enabled.checked});});
-      chatUI.mode.addEventListener('change',()=>{stopChat();applyChat({mode:chatUI.mode.value});});
-      chatUI.backend.addEventListener('change',()=>{stopChat();applyChat({backend:chatUI.backend.value});});
-      chatUI.consent.addEventListener('change',()=>applyChat({realConsent:chatUI.consent.checked}));
+      chatUI.enabled.addEventListener('change',async()=>{
+        if(!chatUI.enabled.checked)stopChat();
+        const ok=await applyChat({enabled:chatUI.enabled.checked});
+        if(!ok){chatUI.enabled.checked=!chatUI.enabled.checked;setChatState('设置保存失败，聊天状态未改变',true);}
+      });
+      chatUI.mode.addEventListener('change',async()=>{
+        stopChat();
+        const previous=chat.mode;
+        const ok=await applyChat({mode:chatUI.mode.value});
+        if(!ok){chatUI.mode.value=previous;setChatState('设置保存失败，模式未改变',true);}
+      });
+      chatUI.backend.addEventListener('change',async()=>{
+        stopChat();
+        const previous=chat.backend;
+        const ok=await applyChat({backend:chatUI.backend.value});
+        if(!ok){chatUI.backend.value=previous;setChatState('设置保存失败，后端未改变',true);}
+      });
+      chatUI.consent.addEventListener('change',async()=>{
+        // 取消许可必须立刻生效：先中止在途真实请求，再保存；保存失败则恢复勾选。
+        if(!chatUI.consent.checked)chatAbort?.abort();
+        const previous=chat.realConsent===true;
+        const ok=await applyChat({realConsent:chatUI.consent.checked});
+        if(!ok){chatUI.consent.checked=previous;setChatState('真实调用许可保存失败，已恢复原状态',true);}
+      });
       chatUI.persona.addEventListener('change',()=>applyChat({persona:chatUI.persona.value}));
       chatUI.clear.addEventListener('click',async()=>{
         try{

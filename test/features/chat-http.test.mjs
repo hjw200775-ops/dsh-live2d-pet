@@ -206,5 +206,25 @@ test('渲染器在卸载/禁用/切换模式时取消未结束请求并清理定
   const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
   assert.match(viewer, /disposed=true;chatAbort\?\.abort\(\);followAbort\?\.abort\(\);clearTimeout\(chatBubbleTimer\)/);
   assert.match(viewer, /if\(!chatUI\.enabled\.checked\)stopChat\(\)/);
-  assert.match(viewer, /chatUI\.mode\.addEventListener\('change',\(\)=>\{stopChat\(\)/);
+  assert.match(viewer, /chatUI\.mode\.addEventListener\('change',async\(\)=>\{\s*stopChat\(\)/);
+});
+test('真实后端不再误判：host-llm 合法、降级明确、取消/错误不显示成功', async () => {
+  const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
+  assert.match(viewer, /backend!=='host-llm'/);
+  assert.equal(/if\(payload\.simulated!==true\)failure='unexpected-model'/.test(viewer), false);
+  assert.match(viewer, /已降级为本地模拟/);
+  assert.match(viewer, /DSH 模型（真实后端）/);
+  assert.match(viewer, /本地模拟（无上下文记忆）/);
+  assert.match(viewer, /failure==='aborted'\).*已停止生成/);
+});
+
+test('Pet 设置先保存再请求：失败回滚、取消许可立即中止在途真实请求', async () => {
+  const viewer = await readFile(path.resolve('renderer/viewer.js'), 'utf8');
+  assert.match(viewer, /const applyChat=patch=>\{[^}]*return persist\(\);\}/);
+  assert.match(viewer, /const ok=await applyChat\(\{enabled:chatUI\.enabled\.checked\}\)/);
+  assert.match(viewer, /设置保存失败，聊天状态未改变/);
+  assert.match(viewer, /设置保存失败，后端未改变/);
+  assert.match(viewer, /if\(!chatUI\.consent\.checked\)chatAbort\?\.abort\(\)/);
+  assert.match(viewer, /真实调用许可未开启，未发送/);
+  assert.match(viewer, /if\(!ok\)\{chatUI\.consent\.checked=previous/);
 });

@@ -287,6 +287,7 @@ app.whenReady().then(async () => {
     coreFile: config.coreFile,
     configDir,
     preferencesFile: viewerPreferencesFile,
+    mode: 'desktop',
     activity: link,
     bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json'),
   });

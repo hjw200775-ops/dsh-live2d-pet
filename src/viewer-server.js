@@ -259,6 +259,7 @@ export async function startViewer(config) {
       // Follow（只读陪伴）：会话列表与事件流都转发 Host；Host 不在线时明确降级。
       if (req.method === 'POST' && (key === 'follow/sessions' || key === 'follow')) {
         if (req.headers.origin !== origin) { res.writeHead(403).end(); return; }
+        if (config.mode === 'overlay') { res.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'overlay-unsupported' })); return; }
         const host = await loadHostBridge(config.configDir);
         if (!host) { res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'host-unavailable' })); return; }
         if (key === 'follow/sessions') {
@@ -317,9 +318,11 @@ export async function startViewer(config) {
         const controller=new AbortController();
         const onClose=()=>{if(!controller.signal.aborted)controller.abort();};
         req.on('close',onClose);res.on('close',onClose);
+        const overlay = config.mode === 'overlay';
         try {
           let proxied=false;
-          if(chat.backend==='host'){
+          // Overlay 没有可信实例身份，即使 Desktop 存档授权也一律模拟，绝不代理到 Host。
+          if(chat.backend==='host' && !overlay){
             const host=await loadHostBridge(config.configDir);
             if(host) proxied=await proxyHostChat({res,host,text:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs});
           }
@@ -327,7 +330,7 @@ export async function startViewer(config) {
             await writeChatStream({
               res,prompt:message.text,mode:chat.mode,signal:controller.signal,timeoutMs:limits.timeoutMs,
               backend:'simulated',model:'local-simulator',scenario:chat.backend==='host'?'ok':limits.scenario,
-              degraded:chat.backend==='host',degradedReason:'host-unavailable',
+              degraded:chat.backend==='host',degradedReason:overlay?'overlay-simulated-only':'host-unavailable',
             });
           }
         } catch(error) {
