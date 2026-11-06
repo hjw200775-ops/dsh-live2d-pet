@@ -20,20 +20,27 @@
   <p id="save-state" role="status" hidden></p>
 
   <div class="tab" data-tab-panel="appearance">
-    <button data-act="larger" type="button">放大</button>
-    <button data-act="smaller" type="button">缩小</button>
-    <button data-act="reset" type="button">复位大小</button>
-    <button id="pause" type="button">暂停</button>
-    <p class="section">装扮</p>
-    <div id="outfit"></div>
-    <button data-act="restore" type="button">恢复原始装扮</button>
-    <p class="section">表情</p>
-    <div id="faces"></div>
-    <p class="section">动作</p>
-    <div id="motions"></div>
-    <button data-act="auto" type="button">恢复自动</button>
+    <div class="row2">
+      <button data-act="larger" type="button">放大</button>
+      <button data-act="smaller" type="button">缩小</button>
+      <button data-act="reset" type="button">复位大小</button>
+      <button id="pause" type="button">暂停</button>
+    </div>
+    <details class="group"><summary>装扮</summary>
+      <div id="outfit"></div>
+      <button data-act="restore" type="button">恢复原始装扮</button>
+    </details>
+    <details class="group"><summary>表情</summary>
+      <div id="faces"></div>
+    </details>
+    <details class="group"><summary>动作</summary>
+      <div id="motions"></div>
+      <button data-act="auto" type="button">恢复自动</button>
+    </details>
     <p id="pace">绘制间隔统计中…</p>
-    <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+    <details class="group"><summary>关于</summary>
+      <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+    </details>
   </div>
 
   <div class="tab" data-tab-panel="interaction" hidden>
