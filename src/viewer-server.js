@@ -11,7 +11,7 @@ import {createActivity} from './activity.js';
 
 const require = createRequire(import.meta.url);
 const renderer = fileURLToPath(new URL('../renderer/', import.meta.url));
-const mime = name => name.endsWith('.json') ? 'application/json; charset=utf-8' : name.endsWith('.png') ? 'image/png' : name.endsWith('.js') || name.endsWith('.mjs') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream';
+const mime = name => name.endsWith('.json') ? 'application/json; charset=utf-8' : name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : name.endsWith('.js') || name.endsWith('.mjs') ? 'text/javascript; charset=utf-8' : name.endsWith('.css') ? 'text/css; charset=utf-8' : name.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream';
 
 export async function startViewer(config) {
   const ownsActivity=!config.activity;if(ownsActivity)config.activity=createActivity();
@@ -45,6 +45,7 @@ export async function startViewer(config) {
   const staticFiles = new Map(['index.html', 'viewer.js', 'style.css', 'cubism-color.js'].map(n => [n, path.join(renderer, n)]));
   // 运行时模块整目录放行：以前是逐个 set，加了新模块忘了登记就会让整个渲染器 import 失败
   staticFiles.set('runtime/balance.mjs', fileURLToPath(new URL('./balance.mjs', import.meta.url)));
+  staticFiles.set('assets/petpat.webp', path.join(renderer, 'assets', 'petpat.webp'));
   {
     const runtimeDir = fileURLToPath(new URL('./runtime/', import.meta.url));
     for (const name of await readdir(runtimeDir)) {

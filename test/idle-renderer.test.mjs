@@ -1,5 +1,6 @@
 import { createThinkingFace } from '../src/runtime/thinking-accents.mjs';
 import { createThinkingMotion } from '../src/runtime/thinking.mjs';
+import { createHeadPat } from '../src/runtime/head-pat.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -31,6 +32,7 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
     thinkingHandReturns:{Movement1:0,Movement3:0,Param41:0},automaticHand:'default',returningAutomaticHand:false,wardrobe:{blush:false,sweat:false},thinkingFace:createThinkingFace(),thinkingMotion: createThinkingMotion(), currentThinkingPhase:'waiting', idleMotion: createIdleMotion({ seed: 42 }), blink: createBlink({ seed: 42 }), breathValue, attachNaturalOverlay,
     look: { active: false, update() { return { x: 0, y: 0 }; } }, lookParameters,
     gaze: { valueAt: () => ({ x: 0, y: 0 }) }, desktopApi: false,
+    headPat: createHeadPat(),
   };
   runInNewContext(source.slice(start, end), context);
   let moved = false, blinked = false;
@@ -47,9 +49,9 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
     const physicsX = values.ParamAngleX;
     internalModel.emit('beforeModelUpdate');
     assert.equal(values.ParamAngleX, physicsX, '不能在物理之后再次叠加同一头部偏移');
-    assert.ok(Math.abs(values.AngleX - baseline.AngleX) <= 1.8 + 1e-6);
-    assert.ok(Math.abs(values.AngleZ - baseline.AngleZ) <= 1.4 + 1e-6);
-    assert.ok(Math.abs(values.PositionX - baseline.PositionX) <= 0.012 + 1e-6);
+    assert.ok(Math.abs(values.AngleX - baseline.AngleX) <= 3.3 + 1e-6);
+    assert.ok(Math.abs(values.AngleZ - baseline.AngleZ) <= 3.2 + 1e-6);
+    assert.ok(Math.abs(values.PositionX - baseline.PositionX) <= 1.9 + 1e-6);
     moved ||= Math.abs(values.AngleX - baseline.AngleX) > 0.5;
     blinked ||= values.ParamEyeLOpen < baseline.ParamEyeLOpen * 0.1;
     assert.ok(values.ParamEyeLOpen <= baseline.ParamEyeLOpen);
@@ -87,4 +89,26 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
   internalModel.updateNaturalMovements(1000/60, now+16);
   assert.ok(values.AngleX > baseline.AngleX + 5, '待机小动作期间仍应注视鼠标');
   assert.equal(saved.AngleX, baseline.AngleX);
+
+  context.gestureLock = false;
+  context.headPat.begin(now);
+  now += 450;
+  context.headPat.tick(now);
+  now += 2500;
+  values = { ...baseline, key7: 0 };
+  internalModel.updateNaturalMovements(1000/60, now);
+  internalModel.emit('beforeModelUpdate');
+  assert.ok(values.AngleY < baseline.AngleY - 3);
+  assert.ok(values.key7 > .6);
+  context.wardrobe.blush = true;
+  values.key7 = 1;
+  internalModel.emit('beforeModelUpdate');
+  assert.equal(values.key7, 1, 'manual blush stays at the selected value');
+  context.headPat.end(now);
+  now += 450;
+  context.headPat.tick(now);
+  context.wardrobe.blush = false;
+  values = { ...baseline, key7: 0 };
+  internalModel.emit('beforeModelUpdate');
+  assert.equal(values.key7, 0);
 });

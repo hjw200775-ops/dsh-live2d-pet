@@ -23,7 +23,7 @@ async function rendererTransitionHarness(){
   disposed:false,appliedMode:'idle',motionLocked:false,gestureLock:false,currentThinkingPhase:'waiting',
   thinkingHandReturns:{Movement1:0,Movement3:0,Param39:0,Param41:0},
   model:{internalModel:{coreModel:{setParameterValueById(){}}},motion:async group=>{calls.push(group);return true;}},manager:{},motion:'Idle',expression:'',
-  thinkingHand,handReturn,handEntry,fail:e=>{throw e;},setTimeout:fn=>{fn();},
+  thinkingHand,handReturn,handEntry,stopHeadPat(){},fail:e=>{throw e;},setTimeout:fn=>{fn();},
  };
  runInNewContext(source.slice(start,end)+';globalThis.activate=activate;globalThis.flush=()=>chain;',context);
  return {context,calls};

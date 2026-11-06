@@ -3,6 +3,7 @@
 <body>
 <main id="pet">
   <canvas id="canvas" aria-label="DeepSeek-chan Live2D 模型"></canvas>
+  <img id="petpat" alt="" aria-hidden="true" hidden src="./assets/petpat.webp">
   <p id="bubble" hidden></p>
   <p id="balance" hidden>余额…</p>
   <p id="status" role="status">检查本地模型与运行时…</p>
@@ -10,31 +11,49 @@
 <aside id="panel" hidden>
   <header><strong>设置</strong><button data-act="close" type="button">关闭</button></header>
   <p id="activity" role="status">待机</p>
-  <button data-act="larger" type="button">放大</button>
-  <button data-act="smaller" type="button">缩小</button>
-  <button data-act="reset" type="button">复位大小</button>
-  <button id="pause" type="button">暂停</button>
-  <div id="follow-controls">
-    <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
-    <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
-    <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
-    <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
-    <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
+  <div id="panel-tabs" role="tablist" aria-label="设置分类">
+    <button type="button" id="tab-appearance" role="tab" aria-controls="panel-appearance" aria-selected="true">外观</button>
+    <button type="button" id="tab-interaction" role="tab" aria-controls="panel-interaction" aria-selected="false" tabindex="-1">互动</button>
+    <button type="button" id="tab-follow" role="tab" aria-controls="panel-follow" aria-selected="false" tabindex="-1" data-desktop-only>跟随</button>
   </div>
-  <button data-act="refresh" type="button">刷新余额</button>
-  <button data-act="pin" type="button">取消置顶</button>
-  <button data-act="quit" type="button">退出</button>
-  <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
-  <p class="section">装扮</p>
-  <div id="outfit"></div>
-  <button data-act="restore" type="button">恢复原始装扮</button>
-  <p class="section">表情</p>
-  <div id="faces"></div>
-  <p class="section">动作</p>
-  <div id="motions"></div>
-  <button data-act="auto" type="button">恢复自动</button>
-  <p id="pace">绘制间隔统计中…</p>
-  <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+  <section id="panel-appearance" class="panel-tab" role="tabpanel" aria-labelledby="tab-appearance">
+    <div class="panel-row">
+      <button data-act="larger" type="button">放大</button>
+      <button data-act="smaller" type="button">缩小</button>
+      <button data-act="reset" type="button">复位大小</button>
+    </div>
+    <details class="panel-group"><summary>装扮</summary>
+      <div id="outfit"></div>
+      <button data-act="restore" type="button">恢复原始装扮</button>
+    </details>
+    <details class="panel-group"><summary>表情</summary><div id="faces"></div></details>
+    <details class="panel-group"><summary>关于</summary>
+      <p id="pace">绘制间隔统计中…</p>
+      <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+    </details>
+  </section>
+  <section id="panel-interaction" class="panel-tab" role="tabpanel" aria-labelledby="tab-interaction" hidden>
+    <div class="panel-row">
+      <button id="pause" type="button">暂停</button>
+      <button data-act="auto" type="button">恢复自动</button>
+    </div>
+    <details class="panel-group"><summary>动作</summary><div id="motions"></div></details>
+  </section>
+  <section id="panel-follow" class="panel-tab" role="tabpanel" aria-labelledby="tab-follow" hidden>
+    <div id="follow-controls">
+      <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
+      <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
+      <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
+      <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
+      <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
+    </div>
+  </section>
+  <footer id="panel-footer" class="panel-row" data-desktop-only>
+    <button data-act="refresh" type="button">刷新余额</button>
+    <button data-act="pin" type="button">取消置顶</button>
+    <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
+    <button data-act="quit" type="button">退出</button>
+  </footer>
 </aside>
 <script type="module">
 import('./viewer.js').catch(error=>{

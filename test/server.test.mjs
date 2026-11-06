@@ -28,6 +28,12 @@ test('private viewer serves only model references and generated Idle without edi
     assert.equal((await fetch(new URL(route,base))).status,404);
   }
   assert.equal((await fetch(new URL('model/texture.png',base))).status,200);
+  const petPat = await fetch(new URL('assets/petpat.webp', base));
+  assert.equal(petPat.status, 200);
+  assert.equal(petPat.headers.get('content-type'), 'image/webp');
+  const image = Buffer.from(await petPat.arrayBuffer());
+  assert.equal(image.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(image.toString('ascii', 8, 12), 'WEBP');
   const flinch = await fetch(new URL('model/generated/flinch.motion3.json',base)).then(r=>r.json());
   assert.equal(flinch.Meta.Loop,false);
   assert.equal(flinch.Curves.some(curve=>curve.Id==='ParamAngleX'),false);

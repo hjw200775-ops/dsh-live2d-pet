@@ -56,32 +56,37 @@ test('连眨有两次闭眼和中间睁眼，禁用和长时间跳帧后不追�
   assert.equal(blink.valueAt(1000), 1);
 });
 
-test('重心每 8–20 秒选目标，2 秒缓动，AngleZ 与 PositionX 同步有界', () => {
-  const random = seededRandom(29);
+test('待机几秒内能看出换重心，之后持续平缓移动且不累积偏移', () => {
   const shift = createWeightShift({ seed: 29 });
-  let at = 8 + random() * 12;
-  let last = 0;
-  for (let i = 0; i < 1000; i++) {
-    const target = random() * 2 - 1;
-    const before = shift.valueAt(at - 1e-5);
-    const beginning = shift.valueAt(at);
-    assert.ok(Math.abs(beginning.AngleZ - before.AngleZ) < 1e-8);
-    assert.ok(Math.abs(beginning.AngleZ - last * 1.4) < 1e-8);
-    const middle = shift.valueAt(at + 1);
-    assert.ok(Math.abs(middle.AngleZ - (last + target) / 2 * 1.4) < 1e-8);
-    const end = shift.valueAt(at + 2);
-    assert.ok(Math.abs(end.AngleZ - target * 1.4) < 1e-8);
-    assert.ok(Math.abs(end.PositionX - target * 0.012) < 1e-8);
-    assert.ok(Math.abs(end.AngleZ) <= 1.4);
-    const interval = 8 + random() * 12;
-    assert.ok(interval >= 8 && interval <= 20);
-    assert.deepEqual(shift.valueAt(at + interval - 1e-5), end);
-    at += interval;
-    last = target;
+  let previous = shift.valueAt(0);
+  let early = false, left = false, right = false;
+  for (let i = 1; i <= 10000; i++) {
+    const pose = shift.valueAt(i / 100);
+    early ||= i <= 650 && Math.abs(pose.PositionX) > .7;
+    left ||= pose.PositionX < -.7;
+    right ||= pose.PositionX > .7;
+    assert.ok(Math.abs(pose.PositionX) <= 1.65);
+    assert.ok(Math.abs(pose.AngleZ) <= 2.5);
+    assert.ok(Math.abs(pose.PositionX - previous.PositionX) < .03);
+    assert.ok(Math.abs(pose.AngleZ - previous.AngleZ) < .04);
+    previous = pose;
   }
-  const dense = createWeightShift();
-  for (let t = 0; t < 99; t += 0.1) dense.valueAt(t);
-  assert.deepEqual(dense.valueAt(100), createWeightShift().valueAt(100));
+  assert.ok(early && left && right);
+  assert.deepEqual(previous, createWeightShift().valueAt(100));
+});
+
+test('跟随鼠标时头部让出控制，重心微动继续', () => {
+  const free = createIdleMotion({ seed: 42 });
+  const following = createIdleMotion({ seed: 42 });
+  for (let i = 0; i < 600; i++) {
+    const a = free.valueAt(i / 60);
+    const b = following.valueAt(i / 60, true, { looking: true });
+    assert.equal(b.PositionX, a.PositionX);
+    if (i >= 120) {
+      assert.ok(Math.abs(b.AngleX) <= Math.abs(a.AngleX) * .21);
+      assert.ok(Math.abs(b.AngleY) <= Math.abs(a.AngleY) * .21);
+    }
+  }
 });
 
 test('待机层从零淡入，禁用后回零；恢复和长时间挂起没有姿态跳变', () => {

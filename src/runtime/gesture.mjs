@@ -7,6 +7,10 @@ export function createGestureRecognizer({ slop = 5, holdMs = 180, doubleMs = 260
   let armed = null;
 
   return {
+    cancel() {
+      down = null;
+      armed = null;
+    },
     pointerDown(x, y, time) {
       if (armed && time - armed.time <= doubleMs && Math.hypot(x - armed.x, y - armed.y) <= slop) {
         armed = null;

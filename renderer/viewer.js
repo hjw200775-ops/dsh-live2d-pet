@@ -14,11 +14,13 @@ import { createLookFollower, lookParameters, lookTarget, inFollowRange, normaliz
 import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
+import { createHeadPat } from './runtime/head-pat.mjs';
 (async () => {
   const status=document.getElementById('status'),canvas=document.getElementById('canvas'),badge=document.getElementById('activity');
   let app,model,observer,raf=0,saveTimer,hideTimer,paceTimer=0,hostExitTimer=0,eventSource,telemetryTimer,disposed=false,paused=false,externallyHidden=false,preferencesLoaded=false;
   let preferences={version:1,model:{zoom:1,x:0,y:0}},zoom=1,x=0,y=0,frames=0,desiredMode='idle',appliedMode='idle',expression='',motion='Idle',currentThinkingPhase='waiting';
   const cleanups=[],labels={idle:'待机',thinking:'思考中',answering:'回答中',error:'出错了'};
+  let stopHeadPat=()=>{};
   const on=(el,type,fn,opts)=>{el.addEventListener(type,fn,opts);cleanups.push(()=>el.removeEventListener(type,fn,opts));};
   function fail(e){status.hidden=false;status.classList.add('error');status.textContent=`桌宠没能启动\n\n${e.message||e}`;}
   const persist=()=>{
@@ -29,14 +31,17 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
   const scheduleSave=()=>{clearTimeout(saveTimer);saveTimer=setTimeout(persist,150);};
   on(window,'message',e=>{
     if(e.source!==parent)return;
-    if(e.data?.type==='dsh-live2d/visibility')externallyHidden=!e.data.visible;
+    if(e.data?.type==='dsh-live2d/visibility'){
+      externallyHidden=!e.data.visible;
+      if(externallyHidden)stopHeadPat();
+    }
     if(e.data?.type==='dsh-live2d/overlay'){
       const p=e.data.overlay;
       if(p&&Number.isFinite(p.left)&&Number.isFinite(p.top)){preferences.overlay={left:p.left,top:p.top};scheduleSave();}
     }
   });
   const dispose=()=>{
-    if(disposed)return;void persist();disposed=true;
+    if(disposed)return;stopHeadPat();void persist();disposed=true;
     cancelAnimationFrame(raf);clearTimeout(saveTimer);clearTimeout(hideTimer);clearTimeout(paceTimer);clearTimeout(hostExitTimer);clearInterval(telemetryTimer);observer?.disconnect();eventSource?.close();cleanups.splice(0).forEach(f=>f());
     app?.destroy(false,{children:true,texture:true,baseTexture:true});
   };
@@ -140,6 +145,23 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     if(desktopApi?.getWardrobe)desktopApi.getWardrobe().then(saved=>{wardrobe=normalizeWardrobe(saved);paintPressed();}).catch(()=>{});
     paintPressed();
     let drag, windowDrag=false, lean=0, leanTarget=0;
+    const headPat=createHeadPat();
+    const patOverlay=document.getElementById('petpat');
+    const paintHeadPat=now=>{
+      const feedback=headPat.feedback(now);
+      patOverlay.hidden=feedback.strength<=0;
+      if(patOverlay.hidden)return;
+      const bounds=model.getBounds();
+      const width=Math.max(28,bounds.width*.30);
+      const height=width*(patOverlay.naturalHeight||93)/(patOverlay.naturalWidth||105);
+      patOverlay.style.width=width+'px';
+      patOverlay.style.left=(bounds.x+bounds.width/2-width*.58)+'px';
+      patOverlay.style.top=(bounds.y+bounds.height*.14-height*.86)+'px';
+      patOverlay.style.opacity=String(feedback.strength);
+    };
+    window.__dshPat=()=>({
+      phase:headPat.phase,stage:headPat.feedback(performance.now()).stage,visible:!patOverlay.hidden,
+    });
     if(model.internalModel.renderer?.setClippingMaskBufferSize) model.internalModel.renderer.setClippingMaskBufferSize(2048);
     for(const texture of model.textures){
       texture.baseTexture.scaleMode=PIXI.SCALE_MODES.LINEAR;
@@ -183,15 +205,141 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       desktopApi.getQuitWithHost().then(value=>{quitWithHost=value===true;paintHost();}).catch(()=>{});
       desktopApi.onQuitWithHost?.(value=>{quitWithHost=value===true;paintHost();if(!quitWithHost){clearTimeout(hostExitTimer);hostGoneAt=null;}else if(lastLinked===false)noteHost(false);});
     }
+    const panel=document.getElementById('panel');
+    if(!desktopApi){
+      for(const control of panel.querySelectorAll('[data-desktop-only]'))control.hidden=true;
+    }
+    const tabs=[...panel.querySelectorAll('[role=tab]')].filter(tab=>!tab.hidden);
+    let pointerAt=null,lastIgnore;
+    const setDesktopIgnore=ignore=>{
+      if(!desktopApi||ignore===lastIgnore)return;
+      lastIgnore=ignore;
+      desktopApi.setIgnore(ignore);
+    };
+    const updatePassThrough=()=>{
+      if(!desktopApi||windowDrag)return;
+      const overUi=pointerAt&&document.elementFromPoint(pointerAt.x,pointerAt.y)?.closest('#panel,#balance,button');
+      const overPet=pointerAt&&hitAt(pointerAt.x,pointerAt.y);
+      setDesktopIgnore(panel.hidden&&!headPat.pressing&&!headPat.active&&!overUi&&!overPet);
+    };
+    const placePanel=(left,top)=>{
+      if(panel.hidden)return;
+      const pad=8;
+      panel.style.left=Math.max(pad,Math.min(left,innerWidth-panel.offsetWidth-pad))+'px';
+      panel.style.top=Math.max(pad,Math.min(top,innerHeight-panel.offsetHeight-pad))+'px';
+    };
+    const clampPanel=()=>placePanel(panel.offsetLeft,panel.offsetTop);
+    const openPanelAt=(x,y)=>{
+      stopHeadPat();
+      panel.style.visibility='hidden';
+      panel.hidden=false;
+      const gap=10;
+      const left=x+gap+panel.offsetWidth>innerWidth-8 ? x-panel.offsetWidth-gap : x+gap;
+      placePanel(left,y+gap);
+      panel.style.visibility='';
+      updatePassThrough();
+    };
+    const closePanel=()=>{
+      if(panel.hidden)return;
+      panel.hidden=true;
+      updatePassThrough();
+    };
+    const selectTab=selected=>{
+      for(const tab of tabs){
+        const active=tab===selected;
+        tab.setAttribute('aria-selected',String(active));
+        tab.tabIndex=active?0:-1;
+        document.getElementById(tab.getAttribute('aria-controls')).hidden=!active;
+      }
+      clampPanel();
+    };
+    for(const [index,tab] of tabs.entries()){
+      on(tab,'click',()=>selectTab(tab));
+      on(tab,'keydown',event=>{
+        let next;
+        if(event.key==='ArrowRight')next=(index+1)%tabs.length;
+        else if(event.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;
+        else if(event.key==='Home')next=0;
+        else if(event.key==='End')next=tabs.length-1;
+        else return;
+        event.preventDefault();
+        selectTab(tabs[next]);
+        tabs[next].focus();
+      });
+    }
+    const panelObserver=new ResizeObserver(clampPanel);
+    panelObserver.observe(panel);
+    cleanups.push(()=>panelObserver.disconnect());
+    on(window,'resize',clampPanel);
+    on(window,'mousemove',event=>{pointerAt={x:event.clientX,y:event.clientY};});
+    on(window,'blur',()=>{pointerAt=null;stopHeadPat();closePanel();});
+    on(window,'contextmenu',event=>{
+      event.preventDefault();
+      if(panel.contains(event.target))return;
+      pointerAt={x:event.clientX,y:event.clientY};
+      openPanelAt(pointerAt.x,pointerAt.y);
+    });
+    on(window,'mousedown',event=>{
+      if(panel.hidden||event.button!==0||panel.contains(event.target))return;
+      pointerAt={x:event.clientX,y:event.clientY};
+      closePanel();
+      event.stopPropagation();
+    },true);
+    on(window,'keydown',event=>{
+      if((event.shiftKey&&event.key==='F10')||event.key==='ContextMenu'){
+        event.preventDefault();
+        const point=pointerAt||{x:innerWidth/2,y:innerHeight/2};
+        openPanelAt(point.x,point.y);
+        tabs.find(tab=>tab.getAttribute('aria-selected')==='true')?.focus();
+      }else if(event.key==='Escape'){
+        if(!panel.hidden||headPat.pressing||headPat.engaged)event.preventDefault();
+        stopHeadPat();
+        closePanel();
+      }
+    });
     if(desktopApi){
       hitCache=refreshHitCache();
       const hitTimer=setInterval(()=>{if(!windowDrag)hitCache=refreshHitCache();},250);
       cleanups.push(()=>clearInterval(hitTimer));
       const gestures=createGestureRecognizer({slop:5,holdMs:180,doubleMs:260});
-      const bubble=document.getElementById('bubble'),panel=document.getElementById('panel');
+      const bubble=document.getElementById('bubble');
       let clickTimer=0,bubbleTimer=0,lastReaction=0,nod=null,lastPointerX=0,pinned=true;
+      let pointerId=null,patPointerId=null;
       const hoveredUi=target=>!!(target&&target.closest&&target.closest('#panel,#balance,button'));
       const regionAt=y=>{const rect=document.getElementById('pet').getBoundingClientRect();return (y-rect.top)/Math.max(1,rect.height)<.42?'head':'body';};
+      const isHead=(x,y)=>regionAt(y)==='head'&&hitAt(x,y);
+      const releasePatCapture=()=>{
+        const id=patPointerId;
+        patPointerId=null;
+        if(id!==null&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);
+      };
+      const releasePendingPat=()=>{
+        headPat.end(performance.now());
+        releasePatCapture();
+        updatePassThrough();
+      };
+      stopHeadPat=(fade=false)=>{
+        if(!headPat.pressing&&!headPat.engaged)return;
+        if(fade)headPat.end(performance.now());
+        else headPat.cancel();
+        clearTimeout(clickTimer);
+        gestures.cancel();
+        releasePatCapture();
+        if(!headPat.engaged)patOverlay.hidden=true;
+        updatePassThrough();
+      };
+      on(canvas,'pointerdown',event=>{
+        if(event.isPrimary&&event.button===0)pointerId=event.pointerId;
+      });
+      on(canvas,'pointerup',event=>{
+        if(!event.isPrimary||event.button!==0)return;
+        if(headPat.active)stopHeadPat(true);
+        else if(headPat.pressing)releasePendingPat();
+      });
+      on(canvas,'pointercancel',()=>stopHeadPat());
+      on(canvas,'lostpointercapture',()=>{
+        if(headPat.pressing||headPat.active)stopHeadPat();
+      });
       const say=text=>{bubble.textContent=text;bubble.hidden=false;clearTimeout(bubbleTimer);bubbleTimer=setTimeout(()=>{bubble.hidden=true;},1100);};
       const react=(kind,point)=>{
         const now=performance.now();
@@ -208,10 +356,19 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       window.__nodOffset=now=>{if(!nod)return 0;const t=(now-nod.start)/nod.duration;if(t>=1){nod=null;return 0;}return Math.sin(t*Math.PI)*nod.amp;};
       window.__lean=()=>lean;
       on(window,'mousedown',e=>{
-        if(e.button!==0||hoveredUi(e.target)||!hitAt(e.clientX,e.clientY))return;
-        panel.hidden=true;
-        const decision=gestures.pointerDown(e.clientX,e.clientY,performance.now());
+        const id=pointerId;
+        pointerId=null;
+        if(e.button!==0||!panel.hidden||headPat.engaged||hoveredUi(e.target)||!hitAt(e.clientX,e.clientY))return;
+        const now=performance.now();
+        const decision=gestures.pointerDown(e.clientX,e.clientY,now);
         if(decision.type==='pending-double')clearTimeout(clickTimer);
+        if(appliedMode==='idle'&&!paused&&!gestureLock&&!motionLocked&&!windowDrag&&isHead(e.clientX,e.clientY)&&headPat.begin(now)){
+          if(id!==null){
+            canvas.setPointerCapture(id);
+            patPointerId=id;
+          }
+          updatePassThrough();
+        }
       });
       on(window,'mousemove',e=>{
         if(windowDrag){
@@ -220,15 +377,29 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
           lastPointerX=e.clientX;window.__lastMove=performance.now();
           desktopApi.dragMove();return;
         }
-        const decision=gestures.pointerMove(e.clientX,e.clientY);
-        if(decision?.type==='drag-start'){
-          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
+        if(headPat.active){
+          if(!(e.buttons&1)||!isHead(e.clientX,e.clientY))stopHeadPat(true);
+          return;
         }
-        desktopApi.setIgnore(!(hoveredUi(e.target)||hitAt(e.clientX,e.clientY)));
+        if(headPat.pressing&&!(e.buttons&1)){
+          stopHeadPat();
+          return;
+        }
+        const decision=(e.buttons&1)?gestures.pointerMove(e.clientX,e.clientY):null;
+        if(decision?.type==='drag-start'){
+          headPat.end(performance.now());
+          releasePatCapture();
+          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;setDesktopIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
+        }
+        if(headPat.pressing&&!isHead(e.clientX,e.clientY))stopHeadPat();
+        updatePassThrough();
         // 鼠标跟随：记录软饱和目标，由眼球与头部的独立阻尼响应逼近。
         notePointer(e.clientX,e.clientY,performance.now());
       });
       on(window,'mouseup',e=>{
+        if(e.button!==0)return;
+        if(headPat.engaged){stopHeadPat(true);return;}
+        if(headPat.pressing)releasePendingPat();
         if(windowDrag){windowDrag=false;leanTarget=0;gestures.pointerUp(e.clientX,e.clientY,performance.now());desktopApi.dragEnd();return;}
         const decision=gestures.pointerUp(e.clientX,e.clientY,performance.now());
         if(!decision)return;
@@ -239,21 +410,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
           clickTimer=setTimeout(()=>{const fired=gestures.expire(performance.now());if(fired?.type==='click')react(regionAt(point.y),point);},260);
         }
       });
-      on(window,'contextmenu',e=>{
-        if(!hitAt(e.clientX,e.clientY)&&!hoveredUi(e.target))return;
-        e.preventDefault();
-        panel.hidden=false;
-        desktopApi.setIgnore(false);
-      });
-      // 透明点击穿透时也提供键盘入口，避免仅能通过鼠标打开设置。
-      on(window,'keydown',e=>{
-        if((e.shiftKey&&e.key==='F10')||e.key==='ContextMenu'){
-          e.preventDefault();panel.hidden=false;desktopApi.setIgnore(false);
-        }else if(e.key==='Escape'&&!panel.hidden){panel.hidden=true;}
-      });
       on(panel,'click',e=>{
         const act=e.target?.dataset?.act;if(!act)return;
-        if(act==='close'){panel.hidden=true;return;}
+        if(act==='close'){closePanel();return;}
         if(act==='larger')scaleDesktop(1.15);
         if(act==='smaller')scaleDesktop(1/1.15);
         if(act==='reset'){zoom=1;x=y=0;desktopApi.resetScale();}
@@ -271,22 +430,27 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         }
       });
       window.__life=now=>{
+        if((headPat.pressing||headPat.active)&&(paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag))stopHeadPat();
+        const wasPressing=headPat.pressing;
+        headPat.tick(now);
+        if(wasPressing&&headPat.active){
+          clearTimeout(clickTimer);
+          gestures.cancel();
+          look.release();
+        }
+        paintHeadPat(now);
         // 鼠标跟随完全由 lookFollower 驱动，不再用内置 model.focus（那套是"方向满偏"）
-        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag;
+        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag||headPat.pressing||headPat.engaged;
         if(busy)window.__idleStill=now;
         else if(!window.__idleStill)window.__idleStill=now;
-        const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock,dragging:windowDrag,seed:window.__idleSeed||0});
+        const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock||headPat.pressing||headPat.engaged,dragging:windowDrag,seed:window.__idleSeed||0});
         if(groups){window.__idleStill=now;window.__idleSeed=(window.__idleSeed||0)+1;void playClickMotions(groups);}
       };
     }
     if(!desktopApi){
-      const hostButton=document.getElementById('quit-host');
-      if(hostButton)hostButton.hidden=true;
-      const panel=document.getElementById('panel');
-      on(window,'contextmenu',e=>{e.preventDefault();panel.hidden=false;});
       on(panel,'click',e=>{
         const act=e.target?.dataset?.act;if(!act)return;
-        if(act==='close'){panel.hidden=true;return;}
+        if(act==='close'){closePanel();return;}
         if(act==='larger')scaleDesktop(1.15);
         if(act==='smaller')scaleDesktop(1/1.15);
         if(act==='reset'){zoom=1;x=y=0;layout();scheduleSave();}
@@ -294,7 +458,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         if(act==='auto'){motionLocked=false;activate(desiredMode);}
       });
     }
-    on(canvas,'pointerdown',e=>{if(desktopApi||e.button!==0)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,px:x,py:y};canvas.setPointerCapture(e.pointerId);});
+    on(canvas,'pointerdown',e=>{if(desktopApi||!panel.hidden||e.button!==0)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY,px:x,py:y};canvas.setPointerCapture(e.pointerId);});
     on(canvas,'pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;x=drag.px+e.clientX-drag.x;y=drag.py+e.clientY-drag.y;layout();});
     const endDrag=()=>{if(drag)scheduleSave();drag=null;};
     for(const e of ['pointerup','pointercancel','lostpointercapture'])on(canvas,e,endDrag);
@@ -305,7 +469,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     PIXI.live2d.config.preserveExpressionOnMotion=true;
     let chain=Promise.resolve(),epoch=0,handRaised=false,lastExpression='',automaticHand='default',returningAutomaticHand=false;
     const activate=(mode,options={})=>{
-      if(!Object.hasOwn(labels,mode))return;desiredMode=mode;badge.textContent=labels[mode];const revision=++epoch;
+      if(!Object.hasOwn(labels,mode))return;
+      if(mode!=='idle')stopHeadPat();
+      desiredMode=mode;badge.textContent=labels[mode];const revision=++epoch;
       const playIntro=options.intro!==false;
       chain=chain.catch(fail).then(async()=>{
         if(disposed||revision!==epoch)return;
@@ -373,12 +539,12 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     };
     // Physics reads LeanInput and the skirt parameter before the mesh updates, so the targets have to be in place first.
     let frameLook={},frameThinking={},frameThinkingFace={};
-    const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
+    const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&!headPat.engaged&&(appliedMode==='idle'||appliedMode==='thinking');
     attachNaturalOverlay(model.internalModel,()=>{
       const now=performance.now();
-      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
-      const values=idleMotion.valueAt(now/1000,idleEnabled);
+      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused&&!headPat.engaged;
       const point=look.update(now);
+      const values=idleMotion.valueAt(now/1000,idleEnabled,{looking:look.active});
       const blocked=gestureLock||motionLocked||windowDrag||paused;
       const customFace=(wardrobe.eyes&&wardrobe.eyes!=='none')||wardrobe.sweat||wardrobe.darkFace||wardrobe.loadingFace||wardrobe.tears;
       frameThinkingFace=thinkingFace.valueAt(now/1000,appliedMode==='thinking'?currentThinkingPhase:null,blocked||customFace);
@@ -390,6 +556,9 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
       values.AngleX=(values.AngleX||0)+(frameLook.ParamAngleX||0);
       values.AngleY=(values.AngleY||0)+(frameLook.ParamAngleY||0);
+      const pat=headPat.feedback(now);
+      values.AngleY+=pat.headY;
+      values.AngleZ=(values.AngleZ||0)+pat.headZ;
       if(!blocked&&(appliedMode==='idle'||appliedMode==='thinking'))values.ParamBreath=breathValue(now/1000);
       return values;
     });
@@ -409,6 +578,14 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       for(const [id,value] of Object.entries(frameThinkingFace)){
         if(!(id==='key7'&&wardrobe.blush))coreModel.addParameterValueById(id,value);
       }
+      const pat=headPat.feedback(now);
+      if(pat.blush>0&&!wardrobe.blush)coreModel.addParameterValueById('key7',pat.blush*.65);
+      if(pat.eyeSmile>0&&(!wardrobe.eyes||wardrobe.eyes==='none')&&!wardrobe.loadingFace&&!wardrobe.tears){
+        coreModel.addParameterValueById('EyeSmile',pat.eyeSmile);
+        coreModel.addParameterValueById('LEyeSquint',pat.squint);
+        coreModel.addParameterValueById('REyeSquint',pat.squint);
+        coreModel.addParameterValueById('ParamMouthForm',pat.mouthForm);
+      }
       // 空闲小动作不再禁用跟随；头部控制器已在物理之前叠加，这里只叠加眼珠。
       if(followEnabled()){
         for(const id of ['ParamEyeBallX','ParamEyeBallY']){
@@ -416,7 +593,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         }
       }
       // 视线漂移：只在她没在表演时加，免得和动作抢眼珠
-      if(appliedMode==='idle'&&!gestureLock&&!motionLocked&&!look.active){
+      if(appliedMode==='idle'&&!gestureLock&&!motionLocked&&!headPat.engaged&&!look.active){
         const g=gaze.valueAt(now/1000);
         try{
           coreModel.addParameterValueById('ParamEyeBallX',g.x);
@@ -488,11 +665,13 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
         if(disposed)return;
         const now=performance.now();
         if(point?.inside&&Number.isFinite(point.x)&&Number.isFinite(point.y)){
-          notePointer(point.x,point.y,now);
-          if(!windowDrag)desktopApi.setIgnore(!(document.elementFromPoint(point.x,point.y)?.closest('#panel,#balance,button')||hitAt(point.x,point.y)));
+          pointerAt={x:point.x,y:point.y};
+          if(!headPat.engaged)notePointer(point.x,point.y,now);
+          updatePassThrough();
         }else if(point?.inside===false){
+          pointerAt=null;
           look.release();
-          if(!windowDrag&&document.getElementById('panel').hidden)desktopApi.setIgnore(true);
+          updatePassThrough();
         }
       });
       if(typeof unsubscribe==='function')cleanups.push(unsubscribe);
@@ -517,6 +696,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     on(canvas,'webglcontextlost',e=>{
       e.preventDefault();
       if(disposed||graphicsLost)return;
+      stopHeadPat();
       graphicsLost=true;
       clearTimeout(hideTimer);
       if(!desktopApi?.recoverGraphics){
@@ -543,7 +723,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
       if(!paused&&!disposed)scheduleTick(0);
     };
     if(desktopApi?.onResume)desktopApi.onResume(resumeDrawing);
-    on(document,'visibilitychange',()=>{if(!document.hidden)resumeDrawing();});
+    on(document,'visibilitychange',()=>{if(document.hidden)stopHeadPat();else resumeDrawing();});
     function tick(now){
       if(disposed||graphicsLost)return;const dt=Math.min(50,now-then);then=now;
       window.__life?.(now);
