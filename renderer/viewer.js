@@ -12,6 +12,7 @@ import { createLookFollower, lookParameters, lookTarget, inFollowRange, normaliz
 import { createIdleMotion } from './runtime/idle-motion.mjs';
 import { createBlink } from './runtime/blink.mjs';
 import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
+import { HEAD_PAT_TIMING, createHeadPat } from './runtime/head-pat.mjs';
 import { defaultInteractionPreferences, sanitizeInteractionPreferences, pickBubble, parseBubbleText, formatBubbleText, doubleClickFallbackKind, shouldFireFeedback } from './features/interaction-preferences.mjs';
 import { defaultChatPreferences, sanitizeChatPreferences, CHAT_LIMITS, defaultFollowPreferences, sanitizeFollowPreferences, defaultSpeechPreferences, sanitizeSpeechPreferences } from './features/chat/config.mjs';
 import { followRetryAfterDisconnect } from './features/chat/follow.mjs';
@@ -121,6 +122,8 @@ import { createSseParser } from './features/chat/sse.mjs';
       }catch{/* 模型没这个参数 */ }
       return out;
     };
+    window.__dshPatDebug=(x,y)=>({mode:appliedMode,panelHidden:!!document.getElementById('panel')?.hidden,mouseDowns:window.__dshMouseDowns||0,hit:window.__dshHit?window.__dshHit(x,y):null,region:(()=>{const r=document.getElementById('pet').getBoundingClientRect();return Math.round(((y-r.top)/Math.max(1,r.height))*100)/100;})(),phase:headPat.phase,lastStop:window.__dshPatStop||null});
+    window.__dshPat=()=>({phase:headPat.phase,active:headPat.active,engaged:headPat.engaged,elapsed:headPat.elapsed(performance.now()),visible:!!patOverlay&&!patOverlay.hidden});
     window.__dshGroups=()=>{
       try{
         const groups=model.internalModel.motionManager.groups||{};
@@ -133,6 +136,45 @@ import { createSseParser } from './features/chat/sse.mjs';
     const setZoom=n=>{zoom=Math.min(3,Math.max(.25,n));layout();scheduleSave();};
     const scaleDesktop=factor=>{if(desktopApi)desktopApi.scaleBy(factor);else setZoom(zoom*factor);};
     let wardrobe=defaultWardrobe(),motionLocked=false,gestureLock=false,gestureSerial=0;
+    // 长按摸头：状态机独立在 runtime/head-pat.mjs，这里只做接线
+    const headPat=createHeadPat();
+    const patOverlay=document.getElementById('petpat');
+    let patTimer=0;
+    // 结束摸头：hard=true 立刻清零（失焦/面板/状态切换），否则走淡出
+    const stopHeadPat=(now=performance.now(),hard=false,why='')=>{
+      window.__dshPatStop={why,at:Math.round(now)};
+      clearTimeout(patTimer);patTimer=0;
+      if(hard)headPat.cancel();else headPat.end(now);
+      if(!headPat.engaged&&patOverlay)patOverlay.hidden=true;
+    };
+    // 叠加层跟模型包围盒走：只盖住头顶，缩放/移动窗口都跟着动
+    const paintHeadPat=now=>{
+      if(!patOverlay)return;
+      if(!headPat.engaged){if(!patOverlay.hidden)patOverlay.hidden=true;return;}
+      const fields=headPat.feedback(now);
+      const bounds=model.getBounds();
+      // 素材是 99x70 的手：让掌心压在头顶，而不是飘在上方
+      const width=Math.max(28,bounds.width*0.30);
+      const height=width*70/99;
+      const headTop=bounds.y+bounds.height*0.14;
+      patOverlay.hidden=false;
+      patOverlay.style.width=width.toFixed(1)+'px';
+      patOverlay.style.left=(bounds.x+bounds.width/2-width*0.58).toFixed(1)+'px';
+      patOverlay.style.top=(headTop-height*0.86).toFixed(1)+'px';
+      patOverlay.style.opacity=String(Math.max(0,Math.min(1,fields.strength)));
+    };
+    // 按在头上：先进入预备态，到了阈值才由 tick 升级成摸头
+    const armHeadPat=(x,y,now=performance.now())=>{
+      if(!headPat.begin(now))return false;
+      if(patOverlay)patOverlay.hidden=true;
+      clearTimeout(patTimer);
+      patTimer=setTimeout(()=>{
+        const t=performance.now();
+        headPat.tick(t);
+        if(headPat.active&&patOverlay)patOverlay.hidden=false;
+      },HEAD_PAT_TIMING.thresholdMs);
+      return true;
+    };
     let playClickMotions=async()=>{};
     const paintPressed=()=>{
       for(const button of document.querySelectorAll('#panel [data-key]')){
@@ -649,6 +691,7 @@ import { createSseParser } from './features/chat/sse.mjs';
         clampPanel();
       };
       const openPanelAt=(x,y)=>{
+        stopHeadPat(performance.now(),true,'panel');
         // 先以 visibility:hidden 布局测量，避免第一帧闪在旧位置。
         panel.style.visibility='hidden';
         panel.hidden=false;setIgnore(false);
@@ -689,11 +732,14 @@ import { createSseParser } from './features/chat/sse.mjs';
       window.__nodOffset=now=>{if(!nod)return 0;const t=(now-nod.start)/nod.duration;if(t>=1){nod=null;return 0;}return Math.sin(t*Math.PI)*nod.amp;};
       window.__lean=()=>lean;
       on(window,'mousedown',e=>{
+        window.__dshMouseDowns=(window.__dshMouseDowns||0)+1;
         lastMouse.x=e.clientX;lastMouse.y=e.clientY;
         if(e.button!==0||hoveredUi(e.target)||!hitAt(e.clientX,e.clientY))return;
         if(!panel.hidden)closePanel();
         const decision=gestures.pointerDown(e.clientX,e.clientY,performance.now());
         if(decision.type==='pending-double')clearTimeout(clickTimer);
+        // 待机 + 按在头部 + 面板关闭：进入摸头预备态（短按/拖动仍走原逻辑）
+        if(appliedMode==='idle'&&panel.hidden&&regionAt(e.clientY)==='head'&&!windowDrag)armHeadPat(e.clientX,e.clientY,performance.now());
       });
       on(window,'mousemove',e=>{
         lastMouse.x=e.clientX;lastMouse.y=e.clientY;
@@ -704,7 +750,16 @@ import { createSseParser } from './features/chat/sse.mjs';
           desktopApi.dragMove();return;
         }
         const decision=gestures.pointerMove(e.clientX,e.clientY);
-        if(decision?.type==='drag-start'){
+        // 达到阈值前就拖动，说明用户想拖窗：让位给原有拖动
+        if(headPat.pressing&&(e.buttons&1)&&decision?.type==='drag-start')stopHeadPat(performance.now(),true,'drag-start');
+        // 摸头期间：不拖动、不重算穿透，指令只管"还在不在头上"
+        if(headPat.engaged){
+          setIgnore(false);
+          // 只有仍按着左键时移出头部才算离开；否则真实光标在别处也会误判
+          if((e.buttons&1)&&!hitAt(e.clientX,e.clientY))stopHeadPat(performance.now(),false,'leave-head');
+          return;
+        }
+        if(decision?.type==='drag-start'&&(e.buttons&1)){
           clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
         }
         // 面板打开时整窗保持可点击，否则鼠标移到空白处会重新穿透，点击无法关闭面板。
@@ -713,8 +768,12 @@ import { createSseParser } from './features/chat/sse.mjs';
         notePointer(e.clientX,e.clientY,performance.now());
       });
       on(window,'mouseup',e=>{
+        // 摸头期间松手：结束摸头，并且不触发单击/双击反馈
+        const patWasEngaged=headPat.active||headPat.pressing;
+        if(patWasEngaged)stopHeadPat(performance.now(),false,'mouseup');
         if(windowDrag){windowDrag=false;leanTarget=0;gestures.pointerUp(e.clientX,e.clientY,performance.now());desktopApi.dragEnd();return;}
         const decision=gestures.pointerUp(e.clientX,e.clientY,performance.now());
+        if(patWasEngaged)return;
         if(!decision)return;
         if(decision.type==='double-click'){
           const point={x:e.clientX,y:e.clientY};
@@ -728,7 +787,7 @@ import { createSseParser } from './features/chat/sse.mjs';
         }
       });
       for(const button of panel.querySelectorAll('#panel-tabs [data-tab]'))on(button,'click',()=>showTab(button.dataset.tab));
-      on(window,'blur',()=>{if(!panel.hidden)closePanel();});
+      on(window,'blur',()=>{if(!panel.hidden)closePanel();stopHeadPat(performance.now(),true,'blur');});
       on(window,'contextmenu',e=>{
         e.preventDefault();
         if(e.target instanceof Node&&panel.contains(e.target))return; // 面板内右键不跳位置
@@ -744,7 +803,7 @@ import { createSseParser } from './features/chat/sse.mjs';
       on(window,'keydown',e=>{
         if((e.shiftKey&&e.key==='F10')||e.key==='ContextMenu'){
           e.preventDefault();openPanelAt(lastMouse.x,lastMouse.y);
-        }else if(e.key==='Escape'&&!panel.hidden){closePanel();}
+        }else if(e.key==='Escape'){if(!panel.hidden)closePanel();stopHeadPat(performance.now(),true,'esc');}
       });
       on(panel,'click',e=>{
         const act=e.target?.dataset?.act;if(!act)return;
@@ -766,11 +825,13 @@ import { createSseParser } from './features/chat/sse.mjs';
         }
       });
       window.__life=now=>{
+        headPat.tick(now);
+        paintHeadPat(now);
         // 鼠标跟随完全由 lookFollower 驱动，不再用内置 model.focus（那套是"方向满偏"）
-        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag;
+        const busy=paused||appliedMode!=='idle'||motionLocked||gestureLock||windowDrag||headPat.engaged;
         if(busy)window.__idleStill=now;
         else if(!window.__idleStill)window.__idleStill=now;
-        const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock,dragging:windowDrag,seed:window.__idleSeed||0});
+        const groups=idleVarietyGroups(now-(window.__idleStill||now),{mode:appliedMode,locked:motionLocked||gestureLock||headPat.engaged,dragging:windowDrag,seed:window.__idleSeed||0});
         if(groups){window.__idleStill=now;window.__idleSeed=(window.__idleSeed||0)+1;void playClickMotions(groups);}
       };
     }
@@ -800,7 +861,10 @@ import { createSseParser } from './features/chat/sse.mjs';
     PIXI.live2d.config.preserveExpressionOnMotion=true;
     let chain=Promise.resolve(),epoch=0,handRaised=false,lastExpression='';
     const activate=(mode,options={})=>{
-      if(!Object.hasOwn(labels,mode))return;desiredMode=mode;badge.textContent=labels[mode];const revision=++epoch;
+      if(!Object.hasOwn(labels,mode))return;
+      // 转入思考/回答/出错时让权：摸头立刻结束，避免和动作叠加
+      if(mode!=='idle')stopHeadPat(performance.now(),true,'mode:'+mode);
+      desiredMode=mode;badge.textContent=labels[mode];const revision=++epoch;
       const playIntro=options.intro!==false;
       chain=chain.catch(fail).then(async()=>{
         if(disposed||revision!==epoch)return;
@@ -849,13 +913,16 @@ import { createSseParser } from './features/chat/sse.mjs';
     const followEnabled=()=>!paused&&!windowDrag&&!motionLocked&&(appliedMode==='idle'||appliedMode==='thinking');
     attachNaturalOverlay(model.internalModel,()=>{
       const now=performance.now();
-      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused;
+      const idleEnabled=appliedMode==='idle'&&!gestureLock&&!motionLocked&&!windowDrag&&!paused&&!headPat.engaged;
       const values=idleMotion.valueAt(now/1000,idleEnabled);
       const point=look.update(now);
       frameLook=followEnabled()?lookParameters(point):{};
       // 本模型由 AngleX/Y 经 physics 驱动 ParamAngleX/Y，不能在物理计算后只改输出。
       values.AngleX=(values.AngleX||0)+(frameLook.ParamAngleX||0);
       values.AngleY=(values.AngleY||0)+(frameLook.ParamAngleY||0);
+      const patFields=headPat.feedback(now);
+      values.AngleY=(values.AngleY||0)+patFields.headY;
+      values.AngleZ=(values.AngleZ||0)+patFields.headZ;
       if(appliedMode==='idle'||appliedMode==='thinking')values.ParamBreath=breathValue(now/1000);
       return values;
     });
@@ -867,6 +934,14 @@ import { createSseParser } from './features/chat/sse.mjs';
       const now=performance.now();
       const coreModel=model.internalModel.coreModel;
       if(appliedMode==='answering')coreModel.setParameterValueById('ParamMouthOpenY',.18+.32*(1+Math.sin(now*.017)));
+      // 长按摸头：表情叠在装扮之后，松手后装扮值自然恢复，用户手选的表情不受影响
+      const patNow=headPat.feedback(now);
+      if(patNow.strength>0){
+        if(patNow.blush>0.01){try{coreModel.setParameterValueById('key7',1);}catch{/* 模型没有这个开关 */}}
+        if(patNow.eyeSmile>0.01){try{coreModel.addParameterValueById('EyeSmile',patNow.eyeSmile);}catch{/* 同上 */}}
+        if(patNow.squint>0.01){try{coreModel.addParameterValueById('LEyeSquint',patNow.squint);coreModel.addParameterValueById('REyeSquint',patNow.squint);}catch{/* 同上 */}}
+        if(patNow.mouthForm>0.01){try{coreModel.addParameterValueById('ParamMouthForm',patNow.mouthForm);}catch{/* 同上 */}}
+      }
       applyWardrobe(coreModel);
       // 空闲小动作不再禁用跟随；头部控制器已在物理之前叠加，这里只叠加眼珠。
       if(followEnabled()){
@@ -987,7 +1062,7 @@ import { createSseParser } from './features/chat/sse.mjs';
       if(!paused&&!disposed)scheduleTick(0);
     };
     if(desktopApi?.onResume)desktopApi.onResume(resumeDrawing);
-    on(document,'visibilitychange',()=>{if(!document.hidden)resumeDrawing();});
+    on(document,'visibilitychange',()=>{if(document.hidden)stopHeadPat(performance.now(),true,'hidden');else resumeDrawing();});
     function tick(now){
       if(disposed)return;const dt=Math.min(50,now-then);then=now;
       window.__life?.(now);

@@ -51,7 +51,9 @@ for (const file of files) {
   for (const [re, why] of forbidden) {
     if (re.test(file)) problems.push(`✗ ${file} —— ${why}`);
   }
-  if (file.endsWith('.png') && file !== 'desktop/tray.png') {
+  // 只有这两个图片允许进仓库：托盘图标、摸头的临时手部素材
+  const allowedImages = new Set(['desktop/tray.png', 'renderer/assets/petpat.png']);
+  if (file.endsWith('.png') && !allowedImages.has(file)) {
     problems.push(`✗ ${file} —— 图片（模型/截图不要进仓库；README 用外链）`);
   }
   if (textLike.test(file)) {

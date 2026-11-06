@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog, shell, clipboard } from 'electron';
-import { copyFile, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -289,7 +289,10 @@ app.whenReady().then(async () => {
     preferencesFile: viewerPreferencesFile,
     mode: 'desktop',
     activity: link,
-    bridgeFile: path.join(path.dirname(configPath), 'desktop-bridge.json'),
+    // 录制验收时换一个 bridge 文件：宿主就不再推状态进来，摸头可以在纯待机下复现
+    bridgeFile: process.env.DSH_DESKTOP_RECORD_DIR
+      ? path.join(process.env.DSH_DESKTOP_RECORD_DIR, 'record-bridge.json')
+      : path.join(path.dirname(configPath), 'desktop-bridge.json'),
   });
   const saved = await loadDesktopPreferences(preferencesFile());
   mouseFollow = normalizeMouseFollow(saved.mouseFollow);
@@ -361,6 +364,66 @@ app.whenReady().then(async () => {
         alwaysOnTop: windowRef.isAlwaysOnTop(),
         clickThrough: true,
       };
+      if (process.env.DSH_DESKTOP_RECORD_DIR) {
+        // 只为验收服务：脚本化「未触发 → 长按 → 松手」，按固定间隔抓帧
+        await waitForBridge();
+        const outDir = process.env.DSH_DESKTOP_RECORD_DIR;
+        // 验收时把状态锁在待机：宿主可能正推 thinking，会让摸头永远不触发
+        desktopLink?.ingest?.({ mode: 'idle', activeCount: 0 });
+        const keepIdle = setInterval(() => desktopLink?.ingest?.({ mode: 'idle', activeCount: 0 }), 400);
+        await mkdir(outDir, { recursive: true });
+        const point = await windowRef.webContents.executeJavaScript(`(()=>{
+          const w=innerWidth,h=innerHeight;
+          for(let y=Math.round(h*0.12);y<Math.round(h*0.40);y+=8){
+            for(let x=Math.round(w*0.35);x<Math.round(w*0.65);x+=8){
+              if(window.__dshHit&&window.__dshHit(x,y))return{x,y};
+            }
+          }
+          return null;
+        })()`);
+        log('RECORD_POINT ' + JSON.stringify(point));
+        const send = (type) => windowRef.webContents.executeJavaScript(
+          `window.dispatchEvent(new MouseEvent(${JSON.stringify(type)},{clientX:${point?.x ?? 0},clientY:${point?.y ?? 0},button:0,buttons:1,bubbles:true}))`,
+        ).catch(error => log('SEND_FAIL ' + String(error)));
+        let frame = 0;
+        const capture = async () => {
+          const image = await windowRef.webContents.capturePage();
+          await writeFile(path.join(outDir, `frame-${String(frame++).padStart(4, '0')}.png`), image.toPNG());
+        };
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const timeline = JSON.parse(process.env.DSH_DESKTOP_RECORD_TIMELINE || 'null') || [
+          [1200, 'idle'],
+          [700, 'press-start'],
+          [6200, 'hold'],
+          [700, 'release'],
+          [1500, 'after'],
+        ];
+        const states = [];
+        for (const [duration, name] of timeline) {
+          if (name === 'press-start') await send('mousedown');
+          if (name === 'release') await send('mouseup');
+          const steps = Math.round(duration / 100);
+          for (let index = 0; index < steps; index++) {
+            await sleep(100);
+            await capture();
+            if (index % 5 === 0) {
+              const pat = await windowRef.webContents.executeJavaScript(
+                `({p:(window.__dshPat?window.__dshPat():null),d:(window.__dshPatDebug?window.__dshPatDebug(${point?.x ?? 0},${point?.y ?? 0}):null)})`,
+              ).catch(() => null);
+              states.push({ at: name, frame, pat });
+            }
+          }
+        }
+        const debug = await windowRef.webContents.executeJavaScript(
+          `window.__dshPatDebug?window.__dshPatDebug(${point?.x ?? 0},${point?.y ?? 0}):null`,
+        ).catch(error => ({ error: String(error) }));
+        log('RECORD_DEBUG ' + JSON.stringify(debug));
+        clearInterval(keepIdle);
+        log('RECORD_FRAMES ' + frame);
+        log('RECORD_STATES ' + JSON.stringify(states));
+        app.exit(0);
+        return;
+      }
       if (process.env.DSH_DESKTOP_CHECK === '1') {
         await waitForBridge();
         const forcedMode = process.env.DSH_DESKTOP_CHECK_MODE;

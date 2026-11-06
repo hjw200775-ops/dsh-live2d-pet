@@ -28,6 +28,7 @@ test('真实渲染器回调跨 Cubism save/update/load 生命周期运行 10 分
     applyWardrobe() {}, appliedMode: 'idle', gestureLock: false, motionLocked: false, windowDrag: false, paused: false,
     idleMotion: createIdleMotion({ seed: 42 }), blink: createBlink({ seed: 42 }), breathValue, attachNaturalOverlay,
     look: { active: false, update() { return { x: 0, y: 0 }; } }, lookParameters,
+    headPat: { feedback: () => ({ stage: 0, strength: 0, headY: 0, headZ: 0, eyeSmile: 0, squint: 0, mouthForm: 0, blush: 0, nuzzle: 0 }) },
     gaze: { valueAt: () => ({ x: 0, y: 0 }) }, desktopApi: false,
   };
   runInNewContext(source.slice(start, end), context);

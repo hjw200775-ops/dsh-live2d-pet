@@ -10,4 +10,5 @@ local.config.json
 *.psd
 *.png
 !desktop/tray.png
+!renderer/assets/petpat.png
 qa/
