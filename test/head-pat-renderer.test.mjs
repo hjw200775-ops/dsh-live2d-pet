@@ -111,8 +111,12 @@ test('渲染器接线的关键点都在（结构守卫）', async () => {
   const css = await readFile(new URL('../renderer/style.css', import.meta.url), 'utf8');
   assert.ok(css.includes('#petpat'), '样式里缺少 #petpat');
   assert.ok(css.includes('pointer-events:none'), '叠加素材必须 pointer-events:none');
-  assert.ok(css.includes('@keyframes petpat-bob'), '缺少轻拍动画');
+  assert.ok(!css.includes('animation:petpat-bob'), '用真动图后不该再叠 CSS 轻拍，否则双倍抖动');
   const html = await readFile(new URL('../renderer/index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('id="petpat"'), 'HTML 缺少叠加层元素');
-  assert.ok(html.includes('assets/petpat.png'), 'HTML 应指向本地素材');
+  assert.ok(html.includes('assets/petpat.webp'), 'HTML 应指向本地动图素材');
+  const asset = await readFile(new URL('../renderer/assets/petpat.webp', import.meta.url));
+  assert.ok(asset.length > 1000, '动图素材应该存在且有内容');
+  assert.equal(asset.subarray(0, 4).toString('ascii'), 'RIFF', 'webp 应以 RIFF 开头');
+  assert.equal(asset.subarray(8, 12).toString('ascii'), 'WEBP', '应是 WebP 容器');
 });

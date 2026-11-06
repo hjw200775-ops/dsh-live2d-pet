@@ -64,10 +64,5 @@ details.group[open]{background:#0f1822}
 
 /* 长按摸头：临时叠加的手部素材（renderer/assets/petpat.png），不接收鼠标事件 */
 #petpat{position:fixed;left:0;top:0;pointer-events:none;user-select:none;-webkit-user-drag:none;
-  transform-origin:50% 92%;opacity:0;will-change:transform,opacity;
-  animation:petpat-bob 900ms ease-in-out infinite;
+  transform-origin:50% 92%;opacity:0;will-change:opacity;
   filter:drop-shadow(0 6px 10px rgba(0,0,0,.25))}
-@keyframes petpat-bob{
-  0%,100%{transform:translateY(0) rotate(-2.5deg) scale(1)}
-  50%{transform:translateY(5%) rotate(2.5deg) scale(1.02)}}
-@media (prefers-reduced-motion: reduce){#petpat{animation:none}}

@@ -186,7 +186,7 @@ export async function startViewer(config) {
   // 运行时模块整目录放行：以前是逐个 set，加了新模块忘了登记就会让整个渲染器 import 失败
   staticFiles.set('runtime/balance.mjs', fileURLToPath(new URL('./balance.mjs', import.meta.url)));
   // 摸头的临时手部素材（只有一张静态图，动效由 CSS 驱动）
-  staticFiles.set('assets/petpat.png', path.join(renderer, 'assets', 'petpat.png'));
+  staticFiles.set('assets/petpat.webp', path.join(renderer, 'assets', 'petpat.webp'));
   {
     const runtimeDir = fileURLToPath(new URL('./runtime/', import.meta.url));
     for (const name of await readdir(runtimeDir)) {

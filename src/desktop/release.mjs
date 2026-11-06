@@ -24,7 +24,7 @@ export const LOCAL_KEEPS = [
 ];
 
 // 托盘图标是程序自带的 UI 资源，不属于「模型/截图」，放行。
-const ALLOWED = [/desktop\/tray\.png$/i, /renderer\/assets\/petpat\.png$/i];
+const ALLOWED = [/desktop\/tray\.png$/i, /renderer\/assets\/petpat\.(png|webp)$/i];
 
 export function blockedPackEntries(entries) {
   return entries.filter(entry => {
