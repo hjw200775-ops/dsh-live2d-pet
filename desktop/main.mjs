@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, screen, dialog, shell, clipboard } from 'electron';
+import { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, dialog, shell, clipboard } from 'electron';
 import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -8,7 +8,7 @@ import { createDesktopLink } from '../src/activity.js';
 import { createFileLogger } from '../src/log-file.mjs';
 import { dragCursorOrigin, movedWindowBounds, resetWindowBounds, scaledWindowBounds } from '../src/desktop/drag.mjs';
 import { loadDesktopPreferences, placeBounds, saveDesktopPreferences } from '../src/desktop/preferences.mjs';
-import { rendererRecovery, wakeWindow, acceptPetIpc } from '../src/desktop/session.mjs';
+import { rendererRecovery, wakeWindow, acceptPetIpc, createResumeGapDetector } from '../src/desktop/session.mjs';
 import { createPointerTracker } from '../src/desktop/pointer.mjs';
 import { normalizeMouseFollow } from '../src/runtime/look.mjs';
 
@@ -35,6 +35,8 @@ let dragging;
 let quitWithHost = false;
 let userHidden = false;
 let rendererReloads = 0;
+let graphicsRecoveryTimer;
+let lastGraphicsReload = -Infinity;
 let mouseFollow = normalizeMouseFollow();
 const preferencesFile = () => path.join(app.getPath('userData'), 'desktop-preferences.json');
 
@@ -63,6 +65,25 @@ async function persistWindow() {
     displayId: String(display.id),
     alwaysOnTop: windowRef.isAlwaysOnTop(),
   });
+}
+
+function recoverWindow() {
+  if (!windowRef || windowRef.isDestroyed() || dragging || zoomJob) return;
+  const current = windowRef.getBounds();
+  const display = screen.getDisplayMatching(current);
+  const placedNow = placeBounds({ bounds: current, displayId: String(display.id) }, displays());
+  if (placedNow.x === current.x && placedNow.y === current.y && placedNow.width === current.width && placedNow.height === current.height) return;
+  windowRef.setBounds({ x: placedNow.x, y: placedNow.y, width: placedNow.width, height: placedNow.height });
+  void persistWindow();
+}
+
+function recoverDesktop(reason) {
+  if (!windowRef || windowRef.isDestroyed()) return;
+  const action = wakeWindow({ userHidden });
+  if (action.reposition) recoverWindow();
+  if (action.show && !windowRef.isVisible()) windowRef.showInactive();
+  windowRef.webContents.send('desktop:resume');
+  log(`DESKTOP_RECOVERY reason=${reason} userHidden=${userHidden} visible=${windowRef.isVisible()}`);
 }
 
 function createWindow(placed) {
@@ -181,6 +202,25 @@ ipcMain.on('desktop:set-quit-with-host', async (event, value) => {
   buildTray();
 });
 ipcMain.on('desktop:quit', event => { if (fromPet(event)) app.quit(); });
+ipcMain.handle('desktop:recover-graphics', event => {
+  if (!fromPet(event) || quitting) return false;
+  if (graphicsRecoveryTimer) return true;
+  if (performance.now() - lastGraphicsReload < 30000) {
+    log('WEBGL_RECOVERY skipped=cooldown');
+    return false;
+  }
+  const contents = event.sender;
+  log('WEBGL_RECOVERY scheduled');
+  // Give the GPU a moment to settle after wake, then rebuild the viewer.
+  graphicsRecoveryTimer = setTimeout(() => {
+    graphicsRecoveryTimer = null;
+    if (quitting || contents.isDestroyed() || !fromPet(event)) return;
+    lastGraphicsReload = performance.now();
+    log('WEBGL_RECOVERY reload');
+    contents.reload();
+  }, 2000);
+  return true;
+});
 ipcMain.on('desktop:refresh-balance', event => { if (fromPet(event)) desktopLink?.requestRefresh(); });
 ipcMain.handle('desktop:get-mouse-follow', event => fromPet(event) ? mouseFollow : null);
 ipcMain.on('desktop:set-mouse-follow', async (event, value) => {
@@ -201,7 +241,10 @@ ipcMain.on('desktop:drag-end', async event => {
 function buildTray() {
   if (!tray || !windowRef || windowRef.isDestroyed()) return;
   const menu = Menu.buildFromTemplate([
-    { label: '显示', click: () => { userHidden = false; windowRef.showInactive(); } },
+    { label: '显示', click: () => {
+      userHidden = false;
+      recoverDesktop('tray-show');
+    } },
     { label: '隐藏', click: () => { userHidden = true; windowRef.hide(); } },
     { label: '置顶', type: 'checkbox', checked: windowRef.isAlwaysOnTop(), click: item => { windowRef.setAlwaysOnTop(item.checked); void persistWindow(); } },
     { label: '随 DSH 退出', type: 'checkbox', checked: quitWithHost, click: async item => {
@@ -272,31 +315,19 @@ app.whenReady().then(async () => {
   mouseFollow = normalizeMouseFollow(saved.mouseFollow);
   const placed = placeBounds(saved, displays());
   windowRef = createWindow(placed);
+  windowRef.once('closed', () => clearTimeout(graphicsRecoveryTimer));
   if (saved.alwaysOnTop === false) windowRef.setAlwaysOnTop(false);
   quitWithHost = saved.quitWithHost === true;
   const icon = nativeImage.createFromPath(path.join(here, 'tray.png'));
   tray = new Tray(icon);
   buildTray();
-  const recoverWindow = () => {
-    if (!windowRef || windowRef.isDestroyed() || dragging || zoomJob) return;
-    const current = windowRef.getBounds();
-    const display = screen.getDisplayMatching(current);
-    const placedNow = placeBounds({ bounds: current, displayId: String(display.id) }, displays());
-    if (placedNow.x === current.x && placedNow.y === current.y && placedNow.width === current.width && placedNow.height === current.height) return;
-    windowRef.setBounds({ x: placedNow.x, y: placedNow.y, width: placedNow.width, height: placedNow.height });
-    void persistWindow();
-  };
   screen.on('display-removed', recoverWindow);
   screen.on('display-metrics-changed', recoverWindow);
-  const wake = () => {
-    const action = wakeWindow({ userHidden });
-    if (action.reposition) recoverWindow();
-    if (!windowRef || windowRef.isDestroyed()) return;
-    if (action.show && !windowRef.isVisible()) windowRef.showInactive();
-    windowRef.webContents.send('desktop:resume');
-  };
-  powerMonitor.on('resume', wake);
-  powerMonitor.on('unlock-screen', wake);
+  if (process.platform !== 'win32') {
+    const { powerMonitor } = await import('electron');
+    powerMonitor.on('resume', () => recoverDesktop('resume'));
+    powerMonitor.on('unlock-screen', () => recoverDesktop('unlock-screen'));
+  }
   windowRef.webContents.on('render-process-gone', (_event, details) => {
     log('RENDER_GONE ' + JSON.stringify(details));
     if (quitting || rendererRecovery(details.reason, rendererReloads) !== 'reload') return;
@@ -312,6 +343,14 @@ app.whenReady().then(async () => {
     catch { event.preventDefault(); }
   });
   await windowRef.loadURL(viewer.url);
+  if (process.platform === 'win32') {
+    // Avoid initializing Electron's native power monitor on Windows.
+    const hadLongGap = createResumeGapDetector();
+    const resumeTimer = setInterval(() => {
+      if (hadLongGap()) recoverDesktop('timer-gap');
+    }, 1000);
+    windowRef.once('closed', () => clearInterval(resumeTimer));
+  }
   // 透明点击穿透窗口的 DOM mousemove 在离开/重新进入时可能断流。
   // 用 Electron 屏幕坐标兜底；只在识别范围内坐标变化和移出时发送。
   const pointerTracker = createPointerTracker();

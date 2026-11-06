@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   setMouseFollow(value) { ipcRenderer.send('desktop:set-mouse-follow', value); },
   quit() { ipcRenderer.send('desktop:quit'); },
   refreshBalance() { ipcRenderer.send('desktop:refresh-balance'); },
+  recoverGraphics() { return ipcRenderer.invoke('desktop:recover-graphics'); },
   getWardrobe() { return ipcRenderer.invoke('desktop:get-wardrobe'); },
   setWardrobe(value) { ipcRenderer.send('desktop:set-wardrobe', value); },
   getQuitWithHost() { return ipcRenderer.invoke('desktop:get-quit-with-host'); },

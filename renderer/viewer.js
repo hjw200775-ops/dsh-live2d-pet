@@ -513,11 +513,25 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     };
     eventSource.onmessage=e=>{try{const s=JSON.parse(e.data);applyBalance(s.balance);const previousThinkingPhase=currentThinkingPhase;currentThinkingPhase=thinkingPhase(s.thinkingPhase);lastLinked=s.connected!==false;noteHost(lastLinked);if(s.connected===false){badge.textContent='未连接';badge.title='DSH 未连接，桌宠保持待机';if(desiredMode!=='idle')activate('idle');return;}if(s.mode!==desiredMode||(s.mode==='thinking'&&currentThinkingPhase!==previousThinkingPhase))activate(s.mode);else badge.textContent=labels[s.mode]||labels.idle;if(s.mode==='thinking')badge.textContent=({waiting:'等待响应',normal:'处理中',deep:'推理输出中'})[currentThinkingPhase];badge.title='跟随 DSH 实际回合状态';}catch(err){fail(err);}};
     eventSource.onerror=()=>{badge.title='宿主连接中断，正在重连';};
-    on(canvas,'webglcontextlost',e=>{e.preventDefault();fail(new Error('WebGL 上下文丢失，请刷新'));});
+    let graphicsLost=false;
+    on(canvas,'webglcontextlost',e=>{
+      e.preventDefault();
+      if(disposed||graphicsLost)return;
+      graphicsLost=true;
+      clearTimeout(hideTimer);
+      if(!desktopApi?.recoverGraphics){
+        fail(new Error('WebGL 上下文丢失，请刷新'));
+        return;
+      }
+      status.hidden=false;
+      status.textContent='图形上下文丢失，正在恢复…';
+      const recoveryFailed=()=>{if(!disposed)fail(new Error('图形恢复失败，请退出并重新打开桌宠'));};
+      desktopApi.recoverGraphics().then(scheduled=>{if(!scheduled)recoveryFailed();}).catch(recoveryFailed);
+    });
     let then=performance.now(),lastPaceUi=0;status.textContent='已加载 · 状态联动已连接';
     const pace=createFramePace();
     const scheduleTick=wait=>{
-      if(disposed)return;
+      if(disposed||graphicsLost)return;
       clearTimeout(paceTimer);
       cancelAnimationFrame(raf);
       if(document.hidden||externallyHidden||paused){paceTimer=setTimeout(()=>requestAnimationFrame(tick),200);return;}
@@ -531,7 +545,7 @@ import { attachNaturalOverlay } from './runtime/natural-overlay.mjs';
     if(desktopApi?.onResume)desktopApi.onResume(resumeDrawing);
     on(document,'visibilitychange',()=>{if(!document.hidden)resumeDrawing();});
     function tick(now){
-      if(disposed)return;const dt=Math.min(50,now-then);then=now;
+      if(disposed||graphicsLost)return;const dt=Math.min(50,now-then);then=now;
       window.__life?.(now);
       const active=!paused&&(appliedMode!=='idle'||windowDrag||look.moving);
       const decision=pace.consume(dt,active);
