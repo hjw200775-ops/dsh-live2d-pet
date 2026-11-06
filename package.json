@@ -62,13 +62,13 @@
     "vtuber",
     "electron"
   ],
-  "homepage": "https://github.com/hjw200775-ops/dsh-live2d-pet-#readme",
+  "homepage": "https://github.com/hjw200775-ops/dsh-live2d-pet#readme",
   "bugs": {
-    "url": "https://github.com/hjw200775-ops/dsh-live2d-pet-/issues"
+    "url": "https://github.com/hjw200775-ops/dsh-live2d-pet/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hjw200775-ops/dsh-live2d-pet-.git"
+    "url": "git+https://github.com/hjw200775-ops/dsh-live2d-pet.git"
   }
 }
