@@ -9,96 +9,118 @@
 </main>
 <aside id="panel" hidden>
   <header><strong>设置</strong><button data-act="close" type="button">关闭</button></header>
+  <nav id="panel-tabs" role="tablist">
+    <button type="button" data-tab="appearance" role="tab" aria-selected="true" class="active">外观</button>
+    <button type="button" data-tab="interaction" role="tab" aria-selected="false">互动</button>
+    <button type="button" data-tab="chat" role="tab" aria-selected="false">对话</button>
+    <button type="button" data-tab="follow" role="tab" aria-selected="false">跟随</button>
+    <button type="button" data-tab="speech" role="tab" aria-selected="false">语音</button>
+  </nav>
   <p id="activity" role="status">待机</p>
   <p id="save-state" role="status" hidden></p>
-  <button data-act="larger" type="button">放大</button>
-  <button data-act="smaller" type="button">缩小</button>
-  <button data-act="reset" type="button">复位大小</button>
-  <button id="pause" type="button">暂停</button>
-  <div id="follow-controls">
-    <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
-    <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
-    <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
-    <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
-    <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
+
+  <div class="tab" data-tab-panel="appearance">
+    <button data-act="larger" type="button">放大</button>
+    <button data-act="smaller" type="button">缩小</button>
+    <button data-act="reset" type="button">复位大小</button>
+    <button id="pause" type="button">暂停</button>
+    <p class="section">装扮</p>
+    <div id="outfit"></div>
+    <button data-act="restore" type="button">恢复原始装扮</button>
+    <p class="section">表情</p>
+    <div id="faces"></div>
+    <p class="section">动作</p>
+    <div id="motions"></div>
+    <button data-act="auto" type="button">恢复自动</button>
+    <p id="pace">绘制间隔统计中…</p>
+    <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
   </div>
-  <button data-act="refresh" type="button">刷新余额</button>
-  <button data-act="pin" type="button">取消置顶</button>
-  <button data-act="quit" type="button">退出</button>
-  <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
-  <p class="section">互动反馈</p>
-  <div id="interaction">
-    <label><input id="interaction-head" type="checkbox" checked> 摸头反馈</label>
-    <label><input id="interaction-body" type="checkbox" checked> 身体单击反馈</label>
-    <label><input id="interaction-double" type="checkbox" checked> 双击反馈</label>
-    <label for="interaction-cooldown">冷却（毫秒，0–10000）</label>
-    <input id="interaction-cooldown" type="number" min="0" max="10000" step="50" value="650" aria-label="互动冷却毫秒">
-    <label for="interaction-bubble-head">摸头气泡（逗号分隔，留空不弹）</label>
-    <input id="interaction-bubble-head" type="text" maxlength="600" placeholder="嗯？，在的，嘿嘿" aria-label="摸头气泡文案">
-    <label for="interaction-bubble-body">身体单击气泡</label>
-    <input id="interaction-bubble-body" type="text" maxlength="600" placeholder="留空则不弹" aria-label="身体单击气泡文案">
-    <label for="interaction-bubble-double">双击气泡</label>
-    <input id="interaction-bubble-double" type="text" maxlength="600" placeholder="嘿嘿！" aria-label="双击气泡文案">
-    <button id="interaction-reset" type="button">恢复默认互动设置</button>
-  </div>
-  <p class="section">对话（模拟）</p>
-  <div id="chat">
-    <label><input id="chat-enabled" type="checkbox"> 启用对话（模拟）</label>
-    <label for="chat-mode">模式</label>
-    <select id="chat-mode" aria-label="对话模式">
-      <option value="follow">follow：跟随开发会话（示例）</option>
-      <option value="pet">pet：桌宠独立聊天</option>
-    </select>
-    <label for="chat-backend">后端</label>
-    <select id="chat-backend" aria-label="对话后端">
-      <option value="simulated">本地模拟（默认，无费用）</option>
-      <option value="host">DSH 模型（需 Host 桥接与授权）</option>
-    </select>
-    <label class="warn"><input id="chat-consent" type="checkbox"> 允许真实模型调用（可能产生费用）</label>
-    <p id="chat-warning" hidden>真实模式还需 Host 侧开启 DSH_LIVE2D_CHAT_REAL=1 并经人工审批；未满足前不会发起真实请求。</p>
-    <label for="chat-persona">角色描述（仅影响语气，最多 200 字）</label>
-    <input id="chat-persona" type="text" maxlength="200" placeholder="例如：简洁、温和、带点俏皮" aria-label="角色描述">
-    <button id="chat-clear" type="button">清空对话上下文</button>
-    <input id="chat-input" type="text" maxlength="500" placeholder="想对她说点什么…" aria-label="对话输入">
-    <div class="chat-actions">
-      <button id="chat-send" type="button">发送</button>
-      <button id="chat-stop" type="button" disabled>停止</button>
+
+  <div class="tab" data-tab-panel="interaction" hidden>
+    <div id="follow-controls">
+      <button id="mouse-follow" type="button" aria-pressed="true">鼠标跟随：开</button>
+      <label for="follow-range">识别半径 <output id="follow-radius-label">1200</output><span id="follow-radius-unit"> 像素</span></label>
+      <input id="follow-range" type="range" min="100" max="4000" step="1" value="1200" aria-label="鼠标识别半径">
+      <input id="follow-radius-number" type="number" min="100" max="4000" step="1" value="1200" aria-label="精确设置识别半径">
+      <label><input id="follow-unlimited" type="checkbox"> 全屏跟随</label>
     </div>
-    <p id="chat-state">所有回复都来自本地假模型，未接入真实 AI</p>
-  </div>
-  <p class="section">语音（TTS）</p>
-  <div id="speech">
-    <label><input id="speech-enabled" type="checkbox"> 启用语音（默认关闭，当前为离线模拟音频）</label>
-    <label><input id="speech-muted" type="checkbox"> 静音</label>
-    <label for="speech-volume">音量</label>
-    <input id="speech-volume" type="range" min="0" max="100" step="1" value="80">
-    <p id="speech-state">语音未启用：不会播放任何音频</p>
-  </div>
-  <p class="section">跟随开发会话（只读）</p>
-  <div id="follow">
-    <label><input id="follow-enabled" type="checkbox"> 启用跟随（只读，默认关闭）</label>
-    <label for="follow-session">目标会话（必须手动选择）</label>
-    <select id="follow-session" aria-label="跟随目标会话">
-      <option value="">— 请选择会话 —</option>
-    </select>
-    <label><input id="follow-persistent" type="checkbox"> 持续隐藏新内容（不自动弹出）</label>
-    <div class="chat-actions">
-      <button id="follow-stop" type="button">停止跟随</button>
-      <button id="follow-hide" type="button">隐藏内容</button>
+    <p class="section">互动反馈</p>
+    <div id="interaction">
+      <label><input id="interaction-head" type="checkbox" checked> 摸头反馈</label>
+      <label><input id="interaction-body" type="checkbox" checked> 身体单击反馈</label>
+      <label><input id="interaction-double" type="checkbox" checked> 双击反馈</label>
+      <label for="interaction-cooldown">冷却（毫秒，0–10000）</label>
+      <input id="interaction-cooldown" type="number" min="0" max="10000" step="50" value="650" aria-label="互动冷却毫秒">
+      <label for="interaction-bubble-head">摸头气泡（逗号分隔，留空不弹）</label>
+      <input id="interaction-bubble-head" type="text" maxlength="600" placeholder="嗯？，在的，嘿嘿" aria-label="摸头气泡文案">
+      <label for="interaction-bubble-body">身体单击气泡</label>
+      <input id="interaction-bubble-body" type="text" maxlength="600" placeholder="留空则不弹" aria-label="身体单击气泡文案">
+      <label for="interaction-bubble-double">双击气泡</label>
+      <input id="interaction-bubble-double" type="text" maxlength="600" placeholder="嘿嘿！" aria-label="双击气泡文案">
+      <button id="interaction-reset" type="button">恢复默认互动设置</button>
     </div>
-    <p id="follow-state">未启用：不会读取任何会话</p>
-    <p class="privacy">只显示你所选会话中助手最终回复的可见文本；推理、工具结果与系统提示不会展示。回复本身也可能含敏感信息，请随时点「隐藏内容」。</p>
   </div>
-  <p class="section">装扮</p>
-  <div id="outfit"></div>
-  <button data-act="restore" type="button">恢复原始装扮</button>
-  <p class="section">表情</p>
-  <div id="faces"></div>
-  <p class="section">动作</p>
-  <div id="motions"></div>
-  <button data-act="auto" type="button">恢复自动</button>
-  <p id="pace">绘制间隔统计中…</p>
-  <p class="credit">DeepSeek-chan · Kamiya Ryoko / 神宫凉子<br>Live2D Rigging：霓虹猫_NeonNeko<br>程序代码 MIT。模型与 Cubism Core 不在此许可内。</p>
+
+  <div class="tab" data-tab-panel="chat" hidden>
+    <div id="chat">
+      <label><input id="chat-enabled" type="checkbox"> 启用对话（模拟）</label>
+      <label for="chat-mode">模式</label>
+      <select id="chat-mode" aria-label="对话模式">
+        <option value="follow">follow：跟随开发会话（示例）</option>
+        <option value="pet">pet：桌宠独立聊天</option>
+      </select>
+      <label for="chat-backend">后端</label>
+      <select id="chat-backend" aria-label="对话后端">
+        <option value="simulated">本地模拟（默认，无费用）</option>
+        <option value="host">DSH 模型（需 Host 桥接与授权）</option>
+      </select>
+      <label class="warn"><input id="chat-consent" type="checkbox"> 允许真实模型调用（可能产生费用）</label>
+      <p id="chat-warning" hidden>真实模式还需 Host 侧开启 DSH_LIVE2D_CHAT_REAL=1 并经人工审批；未满足前不会发起真实请求。</p>
+      <label for="chat-persona">角色描述（仅影响语气，最多 200 字）</label>
+      <input id="chat-persona" type="text" maxlength="200" placeholder="例如：简洁、温和、带点俏皮" aria-label="角色描述">
+      <button id="chat-clear" type="button">清空对话上下文</button>
+      <input id="chat-input" type="text" maxlength="500" placeholder="想对她说点什么…" aria-label="对话输入">
+      <div class="chat-actions">
+        <button id="chat-send" type="button">发送</button>
+        <button id="chat-stop" type="button" disabled>停止</button>
+      </div>
+      <p id="chat-state">所有回复都来自本地假模型，未接入真实 AI</p>
+    </div>
+  </div>
+
+  <div class="tab" data-tab-panel="follow" hidden>
+    <div id="follow">
+      <label><input id="follow-enabled" type="checkbox"> 启用跟随（只读，默认关闭）</label>
+      <label for="follow-session">目标会话（必须手动选择）</label>
+      <select id="follow-session" aria-label="跟随目标会话">
+        <option value="">— 请选择会话 —</option>
+      </select>
+      <label><input id="follow-persistent" type="checkbox"> 持续隐藏新内容（不自动弹出）</label>
+      <div class="chat-actions">
+        <button id="follow-stop" type="button">停止跟随</button>
+        <button id="follow-hide" type="button">隐藏内容</button>
+      </div>
+      <p id="follow-state">未启用：不会读取任何会话</p>
+      <p class="privacy">只显示你所选会话中助手最终回复的可见文本；推理、工具结果与系统提示不会展示。回复本身也可能含敏感信息，请随时点「隐藏内容」。</p>
+    </div>
+  </div>
+
+  <div class="tab" data-tab-panel="speech" hidden>
+    <div id="speech">
+      <label><input id="speech-enabled" type="checkbox"> 启用语音（默认关闭，当前为离线模拟音频）</label>
+      <label><input id="speech-muted" type="checkbox"> 静音</label>
+      <label for="speech-volume">音量</label>
+      <input id="speech-volume" type="range" min="0" max="100" step="1" value="80">
+      <p id="speech-state">语音未启用：不会播放任何音频</p>
+    </div>
+  </div>
+
+  <footer id="panel-footer">
+    <button data-act="refresh" type="button">刷新余额</button>
+    <button data-act="pin" type="button">取消置顶</button>
+    <button data-act="quit" type="button">退出</button>
+    <button id="quit-host" data-act="host" type="button">随 DSH 退出：关</button>
+  </footer>
 </aside>
 <script type="module">
 import('./viewer.js').catch(error=>{

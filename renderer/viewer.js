@@ -627,13 +627,34 @@ import { createSseParser } from './features/chat/sse.mjs';
       const gestures=createGestureRecognizer({slop:5,holdMs:180,doubleMs:260});
       const bubble=document.getElementById('bubble'),panel=document.getElementById('panel');
       const lastMouse={x:innerWidth/2,y:innerHeight/2};
+      let lastIgnore=null;
+      const setIgnore=value=>{const next=!!value;if(next===lastIgnore)return;lastIgnore=next;desktopApi.setIgnore(next);};
+      let activeTab='appearance';
       // 设置面板跟随鼠标：先显示再测量，最后把左上角夹在视口内。
+      const clampPanel=()=>{
+        if(panel.hidden)return;
+        const pad=8,width=panel.offsetWidth||240,height=panel.offsetHeight||400;
+        const left=Math.max(pad,Math.min(panel.offsetLeft,innerWidth-width-pad));
+        const top=Math.max(pad,Math.min(panel.offsetTop,innerHeight-height-pad));
+        panel.style.left=left+'px';panel.style.top=top+'px';
+      };
+      const showTab=name=>{
+        activeTab=name;
+        for(const button of panel.querySelectorAll('#panel-tabs [data-tab]')){
+          const on=button.dataset.tab===name;
+          button.classList.toggle('active',on);
+          button.setAttribute('aria-selected',String(on));
+        }
+        for(const section of panel.querySelectorAll('[data-tab-panel]'))section.hidden=section.dataset.tabPanel!==name;
+        clampPanel();
+      };
       const openPanelAt=(x,y)=>{
-        panel.hidden=false;desktopApi.setIgnore(false);
+        // 先以 visibility:hidden 布局测量，避免第一帧闪在旧位置。
+        panel.style.visibility='hidden';
+        panel.hidden=false;setIgnore(false);
         const pad=8,gap=10;
         const width=panel.offsetWidth||240;
         const height=Math.min(panel.offsetHeight||400,innerHeight-pad*2);
-        // 默认出现在光标右下方；右侧放不下就翻到左侧，底部放不下就向上夹。
         let left=x+gap;
         if(left+width>innerWidth-pad)left=x-width-gap;
         let top=y+gap;
@@ -641,10 +662,11 @@ import { createSseParser } from './features/chat/sse.mjs';
         left=Math.max(pad,Math.min(left,innerWidth-width-pad));
         top=Math.max(pad,top);
         panel.style.left=left+'px';panel.style.top=top+'px';
+        panel.style.visibility='visible';
       };
       const closePanel=()=>{
         panel.hidden=true;
-        desktopApi.setIgnore(!hitAt(lastMouse.x,lastMouse.y));
+        setIgnore(!hitAt(lastMouse.x,lastMouse.y));
       };
       let clickTimer=0,bubbleTimer=0,lastReaction=0,nod=null,lastPointerX=0,pinned=true;
       const hoveredUi=target=>!!(target&&target.closest&&target.closest('#panel,#balance,button'));
@@ -683,10 +705,10 @@ import { createSseParser } from './features/chat/sse.mjs';
         }
         const decision=gestures.pointerMove(e.clientX,e.clientY);
         if(decision?.type==='drag-start'){
-          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;desktopApi.setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
+          clearTimeout(clickTimer);windowDrag=true;lastPointerX=e.clientX;setIgnore(false);desktopApi.dragStart({x:decision.x,y:decision.y});return;
         }
         // 面板打开时整窗保持可点击，否则鼠标移到空白处会重新穿透，点击无法关闭面板。
-        desktopApi.setIgnore(panel.hidden?! (hoveredUi(e.target)||hitAt(e.clientX,e.clientY)):false);
+        setIgnore(panel.hidden?! (hoveredUi(e.target)||hitAt(e.clientX,e.clientY)):false);
         // 鼠标跟随：记录软饱和目标，由眼球与头部的独立阻尼响应逼近。
         notePointer(e.clientX,e.clientY,performance.now());
       });
@@ -705,6 +727,8 @@ import { createSseParser } from './features/chat/sse.mjs';
           clickTimer=setTimeout(()=>{const fired=gestures.expire(performance.now());if(fired?.type==='click')react(regionAt(point.y),point);},260);
         }
       });
+      for(const button of panel.querySelectorAll('#panel-tabs [data-tab]'))on(button,'click',()=>showTab(button.dataset.tab));
+      on(window,'blur',()=>{if(!panel.hidden)closePanel();});
       on(window,'contextmenu',e=>{
         e.preventDefault();
         if(e.target instanceof Node&&panel.contains(e.target))return; // 面板内右键不跳位置

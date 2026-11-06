@@ -272,6 +272,24 @@ async function runChecks(cdp, args, workdir, stop = () => false) {
   const closed = await evaluate(`document.getElementById('panel').hidden`);
   check('点击面板外空白区域关闭设置', closed === true, String(closed));
 
+  // ---- 设置面板标签 ----
+  await evaluate(`(()=>{const e=new MouseEvent('contextmenu',{clientX:80,clientY:90,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
+  await sleep(120);
+  const tabsBoot = await evaluate(`(()=>{const q=s=>document.querySelector(s);return {tabs:document.querySelectorAll('#panel-tabs [data-tab]').length,chatHidden:q('[data-tab-panel="chat"]').hidden,appearanceHidden:q('[data-tab-panel="appearance"]').hidden};})()`);
+  await evaluate(`(()=>{document.querySelector('#panel-tabs [data-tab="chat"]').click();return true;})()`);
+  await sleep(120);
+  const tabsChat = await evaluate(`(()=>{const q=s=>document.querySelector(s);const r=document.getElementById('panel').getBoundingClientRect();return {chatHidden:q('[data-tab-panel="chat"]').hidden,appearanceHidden:q('[data-tab-panel="appearance"]').hidden,active:document.querySelector('#panel-tabs [data-tab="chat"]').classList.contains('active'),left:r.left,top:r.top,right:r.right,bottom:r.bottom,innerW:innerWidth,innerH:innerHeight};})()`);
+  check('设置面板标签切换正常', tabsBoot.tabs === 5 && tabsBoot.chatHidden === true && tabsBoot.appearanceHidden === false && tabsChat.chatHidden === false && tabsChat.appearanceHidden === true && tabsChat.active === true, JSON.stringify({ tabsBoot, tabsChat }));
+
+  await evaluate(`(()=>{document.querySelector('#panel-tabs [data-tab="appearance"]').click();return true;})()`);
+  await sleep(120);
+  const tabsBack = await evaluate(`(()=>{const p=document.getElementById('panel');const r=p.getBoundingClientRect();return {hidden:p.hidden,left:r.left,top:r.top,right:r.right,bottom:r.bottom,innerW:innerWidth,innerH:innerHeight};})()`);
+  check('切换标签后面板仍在可视范围内', tabsBack.hidden === false && tabsBack.left >= 8 && tabsBack.top >= 8 && tabsBack.right <= tabsBack.innerW - 8 && tabsBack.bottom <= tabsBack.innerH - 8, JSON.stringify(tabsBack));
+  await evaluate(`(()=>{const e=new MouseEvent('mousedown',{clientX:8,clientY:innerHeight-8,bubbles:true,cancelable:true});window.dispatchEvent(e);return true;})()`);
+  await sleep(100);
+  const tabsClosed = await evaluate(`document.getElementById('panel').hidden`);
+  check('标签检查后面板可关闭', tabsClosed === true, String(tabsClosed));
+
   // ---- 角色人格与上下文 ----
   const personaBoot = await evaluate(`({ hasPersona:!!document.getElementById('chat-persona'), maxLength:document.getElementById('chat-persona')?.maxLength, hasClear:!!document.getElementById('chat-clear'), clearDisabled:document.getElementById('chat-clear')?.disabled })`);
   check('角色描述与清空上下文控件存在', personaBoot.hasPersona === true && personaBoot.maxLength === 200 && personaBoot.hasClear === true, JSON.stringify(personaBoot));

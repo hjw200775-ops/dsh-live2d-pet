@@ -115,5 +115,6 @@ test('渲染器引用互动配置模块并渲染出全部面板控件', async ()
   ]) {
     assert.ok(html.includes(`id="${id}"`), `缺少控件 ${id}`);
   }
-  assert.ok(html.indexOf('id="interaction-head"') < html.indexOf('<p class="section">装扮</p>'), '互动设置应位于装扮之前');
+  assert.ok(html.includes('data-tab-panel="interaction"'), '互动设置应有独立标签页');
+  assert.ok(html.includes('id="panel-tabs"'), '设置面板应有标签栏');
 });

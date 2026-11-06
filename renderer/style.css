@@ -15,6 +15,13 @@ canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}canvas
 #panel[hidden]{display:none}
 #panel header{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
 #panel header strong{font-size:14px}
+#panel-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 2px}
+#panel-tabs button{padding:4px 8px;font-size:11px;line-height:1.3;text-align:center;border-radius:999px;background:#1e2a38;color:#9fb2c6}
+#panel-tabs button.active{background:#2f6b45;color:#eafff4}
+#panel-tabs button:focus-visible,#panel button:focus-visible{outline:2px solid #70b6ff;outline-offset:1px}
+.tab{display:flex;flex-direction:column;gap:6px}
+.tab[hidden]{display:none}
+#panel-footer{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:8px;border-top:1px solid #ffffff1f}
 #activity{margin:0 0 6px;color:#9eb0c3;font-size:12px}
 #save-state{margin:0 0 6px;font-size:11px;line-height:1.4;color:#8fd7a8}
 #save-state[hidden]{display:none}
